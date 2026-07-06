@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { extname, isAbsolute, normalize, resolve } from 'node:path';
 import process from 'node:process';
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import App from '../src/App';
 
 type JsonValue =
@@ -29,6 +29,7 @@ const repoRoot = normalize(process.cwd());
 const packageJsonPath = resolve(repoRoot, 'package.json');
 const packageLockPath = resolve(repoRoot, 'package-lock.json');
 const mainEntryPath = resolve(repoRoot, 'src/main.tsx');
+const appEntryPath = resolve(repoRoot, 'src/App.tsx');
 const sampleProjectDir = normalize(resolve(repoRoot, 'sample-projects/tianwen-2'));
 const metadataPath = resolve(sampleProjectDir, 'project.json');
 const forbiddenSmallLabPath = normalize('C:/tmp/mbse-course-lab').toLowerCase();
@@ -155,6 +156,21 @@ describe('天问二号样例项目端到端契约', () => {
     expect(mainEntry).toContain("import 'antd/dist/reset.css';");
   });
 
+  it('ADR 0010 要求需求视图和 BDD 结构视图接入 React Flow 与 ELK 自动布局', () => {
+    const appEntry = readRequiredTextFile(appEntryPath, 'App 前端入口');
+    const mainEntry = readRequiredTextFile(mainEntryPath, 'React 入口');
+    const reactFlowImport = appEntry.match(/import\s*{(?<imports>[\s\S]*?)}\s*from\s*['"]@xyflow\/react['"]/);
+    const reactFlowImports = reactFlowImport?.groups?.imports ?? '';
+
+    expect(reactFlowImport, 'ADR 0010 禁止自研绝对定位 div 画布伪装，App 必须从 @xyflow/react 接入图渲染能力').not.toBeNull();
+    expect(reactFlowImports, 'App 应直接接入 React Flow 画布组件，而不是只保留依赖声明').toMatch(/\bReactFlow\b/);
+    expect(reactFlowImports, 'App 应接入 React Flow 上下文，保证节点、边和视口由 React Flow 管理').toMatch(/\bReactFlowProvider\b/);
+    expect(reactFlowImports, 'App 应接入 React Flow 的视口辅助能力，避免退回静态 div 列表').toMatch(/\b(?:Background|Controls)\b/);
+    expect(appEntry, 'ADR 0010 要求图形布局 seam 显式接入 elkjs').toMatch(/from\s*['"]elkjs(?:\/lib\/elk\.bundled(?:\.js)?)?['"]|require\(['"]elkjs(?:\/lib\/elk\.bundled(?:\.js)?)?['"]\)/);
+    expect(appEntry, '需求视图和 BDD 结构视图应通过 ELK 自动布局，而不是硬编码 position 坐标').toMatch(/\belk\.layout\s*\(/);
+    expect(mainEntry, 'React Flow 样式基线必须在公共入口加载，否则节点、边和视口控件会退化').toContain("import '@xyflow/react/dist/style.css';");
+  });
+
   it('读取内置样例项目元数据时声明课程大实践 MBSE 建模工作台边界', () => {
     const metadata = readRequiredJsonObject(metadataPath, '天问二号样例项目元数据');
     const metadataText = collectStringEntries(metadata)
@@ -232,5 +248,49 @@ describe('天问二号样例项目端到端契约', () => {
     expect(screen.queryByRole('button', { name: /^视图入口$/ })).not.toBeInTheDocument();
     expectVisibleText(/一次性新建\/更新项目流程/, '导入材料后续流程说明');
     expectVisibleText(/确认完成后回到项目工作台/, '确认向导后续流程说明');
+  });
+
+  it('导入天问二号材料后确认生成需求视图和 BDD 结构视图', () => {
+    render(React.createElement(App));
+
+    const importButton = screen.getByRole('button', { name: /新建项目 \/ 导入材料（#3）/ });
+    expect(importButton, '导入材料入口应可点击，不能停留在 #2 的禁用占位按钮').toBeEnabled();
+
+    fireEvent.click(importButton);
+
+    expect(screen.getByRole('dialog', { name: /材料导入与确认向导/ })).toBeVisible();
+    expect(screen.getByText(/一次性确认向导/)).toBeVisible();
+
+    const sourceMaterial = [
+      '天问二号任务面向小行星取样返回和主带彗星探测。',
+      'REQ-TW2-001：任务应支持对目标小行星开展近距离探测并完成取样返回。',
+      'REQ-TW2-004：探测器应通过测控通信分系统完成深空测控、数据下传和遥测接收。',
+      '航天器平台应为载荷、推进、能源、热控和测控通信分系统提供统一承载。',
+    ].join('\n');
+
+    fireEvent.change(screen.getByRole('textbox', { name: /源材料|材料内容|粘贴/ }), {
+      target: { value: sourceMaterial },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /抽取候选|生成候选|开始抽取/ }));
+
+    expect(screen.getByText(/候选使命/)).toBeVisible();
+    expect(screen.getByText(/候选需求/)).toBeVisible();
+    expect(screen.getByText(/候选分系统/)).toBeVisible();
+    expect(screen.getByText(/REQ-TW2-001/)).toBeVisible();
+    expect(screen.getByText(/REQ-TW2-004/)).toBeVisible();
+    expect(screen.getByText(/航天器平台/)).toBeVisible();
+    expect(screen.getByText(/测控通信分系统/)).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: /确认生成|确认并生成/ }));
+
+    expect(screen.getByText(/SysML v2 文本/)).toBeVisible();
+    expect(screen.getByText(/JSON 视图模型/)).toBeVisible();
+    expect(screen.getByText(/需求视图/)).toBeVisible();
+    expect(screen.getByText(/BDD 结构视图/)).toBeVisible();
+    expect(screen.getByLabelText(/需求视图 自动布局图/)).toBeVisible();
+    expect(screen.getByLabelText(/BDD 结构视图 自动布局图/)).toBeVisible();
+    expect(screen.getByText(/自动布局/)).toBeVisible();
+    expect(screen.getByText(/Schema 校验通过/)).toBeVisible();
+    expect(screen.getByText(/引用校验通过/)).toBeVisible();
   });
 });

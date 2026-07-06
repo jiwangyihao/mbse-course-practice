@@ -1,49 +1,63 @@
 {
-  "schemaVersion": "0.1.0",
+  "schemaVersion": "0.2.0",
   "projectId": "tianwen-2",
-  "sourceArtifact": "sample-projects/tianwen-2/model/tianwen-2.sysml",
+  "source": "confirmed-import-data",
+  "generatedFrom": "Tianwen2ConfirmedModel",
   "views": [
     {
-      "id": "requirements-overview",
-      "title": "需求视图占位",
+      "id": "requirements-view",
+      "title": "需求视图",
       "kind": "requirements",
+      "layout": "auto",
+      "layoutEngine": "deterministic-layered-layout",
       "nodes": [
-        {
-          "id": "REQ-TW2-001",
-          "type": "requirement",
-          "label": "支持近地小行星采样返回任务"
-        }
-      ],
-      "edges": []
-    },
-    {
-      "id": "bdd-overview",
-      "title": "BDD 结构视图占位",
-      "kind": "bdd",
-      "nodes": [
-        {
-          "id": "Tianwen2Probe",
-          "type": "block",
-          "label": "天问二号探测器"
-        },
-        {
-          "id": "TTandCSubsystem",
-          "type": "block",
-          "label": "测控通信分系统"
-        }
+        { "id": "REQ-TW2-001", "kind": "requirement", "label": "小行星采样返回任务", "text": "探测器应支持近地小行星采样返回任务。", "position": { "x": 40, "y": 40 } },
+        { "id": "REQ-TW2-002", "kind": "requirement", "label": "深空巡航安全边界", "text": "探测器应在深空巡航阶段维持姿态、能源和热控安全边界。", "position": { "x": 320, "y": 158 } },
+        { "id": "REQ-TW2-003", "kind": "requirement", "label": "测控通信与数据下传", "text": "探测器应通过测控通信链路下传工程遥测与科学数据。", "position": { "x": 320, "y": 276 } },
+        { "id": "REQ-TW2-004", "kind": "requirement", "label": "模型工件追溯关系", "text": "探测器应保留模型工件与需求、结构、行为视图之间的追溯关系。", "position": { "x": 320, "y": 394 } },
+        { "id": "spacecraft-platform", "kind": "subsystem", "label": "航天器平台", "position": { "x": 680, "y": 40 } },
+        { "id": "sampling-return", "kind": "subsystem", "label": "采样返回分系统", "position": { "x": 680, "y": 158 } },
+        { "id": "power-thermal", "kind": "subsystem", "label": "电源与热控分系统", "position": { "x": 680, "y": 276 } },
+        { "id": "gnc", "kind": "subsystem", "label": "制导导航与控制分系统", "position": { "x": 680, "y": 394 } },
+        { "id": "ttc-communication", "kind": "subsystem", "label": "测控通信分系统", "position": { "x": 680, "y": 512 } }
       ],
       "edges": [
-        {
-          "id": "edge-probe-ttc",
-          "source": "Tianwen2Probe",
-          "target": "TTandCSubsystem",
-          "type": "composition"
-        }
+        { "id": "hierarchy-REQ-TW2-001-REQ-TW2-002", "kind": "hierarchy", "source": "REQ-TW2-001", "target": "REQ-TW2-002", "label": "需求层级" },
+        { "id": "hierarchy-REQ-TW2-001-REQ-TW2-003", "kind": "hierarchy", "source": "REQ-TW2-001", "target": "REQ-TW2-003", "label": "需求层级" },
+        { "id": "hierarchy-REQ-TW2-001-REQ-TW2-004", "kind": "hierarchy", "source": "REQ-TW2-001", "target": "REQ-TW2-004", "label": "需求层级" },
+        { "id": "trace-REQ-TW2-001-spacecraft-platform", "kind": "trace", "source": "REQ-TW2-001", "target": "spacecraft-platform", "label": "追溯满足" },
+        { "id": "trace-REQ-TW2-001-sampling-return", "kind": "trace", "source": "REQ-TW2-001", "target": "sampling-return", "label": "追溯满足" },
+        { "id": "trace-REQ-TW2-002-spacecraft-platform", "kind": "trace", "source": "REQ-TW2-002", "target": "spacecraft-platform", "label": "追溯满足" },
+        { "id": "trace-REQ-TW2-002-power-thermal", "kind": "trace", "source": "REQ-TW2-002", "target": "power-thermal", "label": "追溯满足" },
+        { "id": "trace-REQ-TW2-002-gnc", "kind": "trace", "source": "REQ-TW2-002", "target": "gnc", "label": "追溯满足" },
+        { "id": "trace-REQ-TW2-003-ttc-communication", "kind": "trace", "source": "REQ-TW2-003", "target": "ttc-communication", "label": "追溯满足" },
+        { "id": "trace-REQ-TW2-004-spacecraft-platform", "kind": "trace", "source": "REQ-TW2-004", "target": "spacecraft-platform", "label": "追溯满足" },
+        { "id": "trace-REQ-TW2-004-ttc-communication", "kind": "trace", "source": "REQ-TW2-004", "target": "ttc-communication", "label": "追溯满足" }
+      ]
+    },
+    {
+      "id": "bdd-structure-view",
+      "title": "BDD 结构视图",
+      "kind": "bdd",
+      "layout": "auto",
+      "layoutEngine": "deterministic-layered-layout",
+      "nodes": [
+        { "id": "spacecraft-platform", "kind": "system", "label": "航天器平台", "position": { "x": 320, "y": 40 } },
+        { "id": "sampling-return", "kind": "subsystem", "label": "采样返回分系统", "position": { "x": 80, "y": 220 } },
+        { "id": "ttc-communication", "kind": "subsystem", "label": "测控通信分系统", "position": { "x": 310, "y": 220 } },
+        { "id": "power-thermal", "kind": "subsystem", "label": "电源与热控分系统", "position": { "x": 540, "y": 220 } },
+        { "id": "gnc", "kind": "subsystem", "label": "制导导航与控制分系统", "position": { "x": 770, "y": 220 } }
+      ],
+      "edges": [
+        { "id": "composition-spacecraft-platform-sampling-return", "kind": "composition", "source": "spacecraft-platform", "target": "sampling-return", "label": "组成" },
+        { "id": "composition-spacecraft-platform-ttc-communication", "kind": "composition", "source": "spacecraft-platform", "target": "ttc-communication", "label": "组成" },
+        { "id": "composition-spacecraft-platform-power-thermal", "kind": "composition", "source": "spacecraft-platform", "target": "power-thermal", "label": "组成" },
+        { "id": "composition-spacecraft-platform-gnc", "kind": "composition", "source": "spacecraft-platform", "target": "gnc", "label": "组成" }
       ]
     }
   ],
   "validation": {
-    "status": "placeholder",
-    "findings": []
+    "status": "passed",
+    "checkedRules": ["schema", "missing-reference"]
   }
 }

@@ -269,3 +269,67 @@ select {
   white-space: normal;
   word-break: break-all;
 }
+
+.import-wizard,
+.candidate-review,
+.generated-workspace {
+  width: 100%;
+}
+.candidate-list {
+  display: grid;
+  gap: 8px;
+}
+
+.candidate-row {
+  align-items: center;
+  background: #f8fbff;
+  border: 1px solid #dbe4f0;
+  border-radius: 10px;
+  display: flex;
+  gap: 10px;
+  padding: 8px 10px;
+}
+
+
+.artifact-preview {
+  background: #0f172a;
+  border-radius: 10px;
+  color: #dbeafe;
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0;
+  max-height: 280px;
+  overflow: auto;
+  padding: 12px;
+  white-space: pre-wrap;
+}
+
+.react-flow-canvas {
+  background: linear-gradient(180deg, #f8fbff 0%, #eef5ff 100%);
+  border: 1px solid #dbe4f0;
+  border-radius: 12px;
+  height: 560px;
+  overflow: hidden;
+}
+
+.react-flow-canvas .react-flow__node {
+  border: 1px solid #b7cff7;
+  border-radius: 12px;
+  box-shadow: 0 8px 20px rgb(15 23 42 / 8%);
+  min-height: 72px;
+  padding: 10px;
+  width: 190px;
+}
+
+.react-flow-canvas .flow-node-requirement {
+  border-left: 5px solid #1677ff;
+}
+
+.react-flow-canvas .flow-node-subsystem,
+.react-flow-canvas .flow-node-system {
+  border-left: 5px solid #52c41a;
+}
+
+.react-flow-canvas .react-flow__edge-text {
+  font-size: 11px;
+}

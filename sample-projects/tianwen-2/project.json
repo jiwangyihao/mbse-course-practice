@@ -5,7 +5,7 @@
   "course": "《基于模型的系统工程》课程大实践",
   "productBoundary": "MBSE 建模工作台",
   "workspaceBoundary": "独立大实践工作区；不属于前 12 个小实验工作区",
-  "description": "用于验证工作台骨架的内置样例项目，包含源材料、项目元数据、最小 SysML v2 文本与 JSON 视图模型占位。",
+  "description": "用于验证材料导入、确认向导、模型文本生成、JSON 视图数据、需求图、结构图与静态校验的内置样例项目。",
   "sourceMaterials": [
     {
       "id": "tw2-source-material",
@@ -16,18 +16,18 @@
   ],
   "modelArtifacts": [
     {
-      "id": "tw2-minimal-sysml",
-      "title": "最小 SysML v2 模型文本",
+      "id": "tw2-confirmed-sysml",
+      "title": "确认生成的 SysML v2 模型文本",
       "kind": "sysml-v2",
       "path": "sample-projects/tianwen-2/model/tianwen-2.sysml",
-      "placeholder": true
+      "placeholder": false
     },
     {
-      "id": "tw2-minimal-view-model",
-      "title": "最小 JSON 视图模型",
+      "id": "tw2-confirmed-view-model",
+      "title": "确认生成的视图模型 JSON 工件",
       "kind": "json-view-model",
       "path": "sample-projects/tianwen-2/model/view-model.json",
-      "placeholder": true
+      "placeholder": false
     }
   ]
 }
