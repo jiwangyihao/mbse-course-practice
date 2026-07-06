@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+target/
+src-tauri/target/
+
+# Environment and local scratch
+.env
+.env.*
+.scratch/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
