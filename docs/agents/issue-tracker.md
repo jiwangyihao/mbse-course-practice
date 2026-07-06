@@ -2,7 +2,7 @@
 
 Issues and PRDs for this repo live as GitHub issues. Use the `gh` CLI for all operations.
 
-> Current setup note: this workspace did not have a Git remote when this file was created. Before issue operations can work, initialize/configure the GitHub repository and ensure `gh` is authenticated.
+> GitHub repository: `https://github.com/jiwangyihao/mbse-course-practice`. Ensure `gh` is authenticated before issue operations.
 
 ## Conventions
 
