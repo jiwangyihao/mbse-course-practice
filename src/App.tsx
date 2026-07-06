@@ -1,189 +1,298 @@
+import {
+  ApartmentOutlined,
+  DatabaseOutlined,
+  DesktopOutlined,
+  FileTextOutlined,
+  FolderOpenOutlined,
+  RocketOutlined,
+  SafetyCertificateOutlined,
+} from '@ant-design/icons';
+import {
+  Alert,
+  Button,
+  Card,
+  Col,
+  ConfigProvider,
+  Descriptions,
+  Flex,
+  Layout,
+  Row,
+  Space,
+  Statistic,
+  Steps,
+  Table,
+  Tag,
+  Tree,
+  Typography,
+  theme,
+} from 'antd';
 import { loadBundledTianwen2Project } from './domain/sampleProject';
 import { workbenchEntry } from './domain/workbench';
 
+const { Header, Sider, Content, Footer } = Layout;
+const { Paragraph, Text, Title } = Typography;
+
 const sampleProject = loadBundledTianwen2Project();
 
-const workspaceModules = ['项目列表', '源材料', '确认向导', '模型工件', '视图入口', '静态校验'];
-
-const viewEntries = [
-  ...sampleProject.viewModelSummary.views.map((view) => ({
-    ...view,
-    status: '可打开',
+const projectResources = [
+  ...sampleProject.sourceMaterials.map((material) => ({
+    icon: <FileTextOutlined />,
+    id: material.id,
+    label: material.title,
+    kind: '源材料',
+    path: material.path,
   })),
+  ...sampleProject.modelArtifacts.map((artifact) => ({
+    icon: artifact.kind === 'sysml-v2' ? <ApartmentOutlined /> : <DatabaseOutlined />,
+    id: artifact.id,
+    label: artifact.title,
+    kind: artifact.kind === 'sysml-v2' ? 'SysML v2' : 'JSON 视图模型',
+    path: artifact.path,
+  })),
+];
+
+const resourceTreeData = [
   {
-    id: 'activity-entry',
-    title: '活动图入口',
-    kind: 'activity',
-    nodeCount: 0,
-    edgeCount: 0,
-    status: '后续切片',
+    title: sampleProject.manifest.name,
+    key: sampleProject.manifest.id,
+    children: projectResources.map((resource) => ({
+      key: resource.id,
+      title: (
+        <Space orientation="vertical" size={2}>
+          <Space size={8} wrap>
+            <span className="resource-icon" aria-hidden="true">
+              {resource.icon}
+            </span>
+            <Tag color="blue">{resource.kind}</Tag>
+            <Text strong>{resource.label}</Text>
+          </Space>
+          <Text type="secondary">{resource.path}</Text>
+        </Space>
+      ),
+    })),
+  },
+];
+
+const artifactColumns = [
+  {
+    title: '工件类型',
+    dataIndex: 'kind',
+    key: 'kind',
+    width: 132,
+    render: (kind: string) => <Tag color="blue">{kind}</Tag>,
   },
   {
-    id: 'traceability-entry',
-    title: '追溯矩阵入口',
-    kind: 'traceability',
-    nodeCount: 0,
-    edgeCount: 0,
-    status: '后续切片',
+    title: '名称',
+    dataIndex: 'label',
+    key: 'label',
+  },
+  {
+    title: '路径',
+    dataIndex: 'path',
+    key: 'path',
+    render: (path: string) => <Text code>{path}</Text>,
+  },
+];
+
+const nextWorkflowSteps = [
+  {
+    title: '材料导入与粘贴',
+    subTitle: '#3',
+    content: '一次性新建/更新项目流程，不作为当前工作台常驻页签。',
+  },
+  {
+    title: '候选使命、需求、分系统确认向导',
+    subTitle: '#3',
+    content: '仅在导入材料后进入，确认完成后回到项目工作台。',
+  },
+  {
+    title: 'Agent Sidecar 生成模型草案',
+    subTitle: '#4',
+    content: '由 Tauri 管理 Sidecar，并以结构化事件返回进度与结果。',
+  },
+  {
+    title: '多视图与静态校验工作区',
+    subTitle: '#5-#7',
+    content: '在真实模型工件生成后进入对应视图，不在 #2 预先实现交互。',
   },
 ];
 
 export default function App() {
-  const sysmlArtifact = sampleProject.modelArtifacts.find((artifact) => artifact.kind === 'sysml-v2');
-  const viewModelArtifact = sampleProject.modelArtifacts.find(
-    (artifact) => artifact.kind === 'json-view-model',
-  );
-
   return (
-    <main className="workbench-shell" aria-labelledby="workbench-title">
-      <aside className="workbench-sidebar" aria-label="工作台侧栏">
-        <div className="brand-block">
-          <span className="app-mark">MBSE</span>
-          <div>
-            <p className="eyebrow">{workbenchEntry.courseName}</p>
-            <h1 id="workbench-title">{workbenchEntry.productName}</h1>
-          </div>
-        </div>
-
-        <nav className="module-nav" aria-label="工作台模块导航">
-          {workspaceModules.map((moduleName) => (
-            <a href={`#${moduleName}`} key={moduleName}>
-              {moduleName}
-            </a>
-          ))}
-        </nav>
-
-        <section className="runtime-card" aria-label="运行状态">
-          <span className="status-dot" aria-hidden="true" />
-          <div>
-            <strong>Tauri 桌面壳入口</strong>
-            <p>本地工作台加载内置天问二号样例项目。</p>
-          </div>
-        </section>
-      </aside>
-
-      <section className="workbench-main">
-        <header className="topbar">
-          <div>
-            <p className="eyebrow">当前工作区</p>
-            <h2>课程大实践项目入口</h2>
-          </div>
-          <span className="boundary-pill">{workbenchEntry.workspaceBoundary}</span>
-        </header>
-
-        <section className="workspace-grid" aria-label="工作台内容区">
-          <article id="项目列表" className="panel project-list-panel">
-            <div className="panel-heading">
-              <p className="eyebrow">Project Explorer</p>
-              <h2>项目列表</h2>
-            </div>
-            <button className="project-row selected" type="button" aria-pressed="true">
-              <span>
-                <strong>{sampleProject.manifest.name}</strong>
-                <small>{sampleProject.manifest.caseName}</small>
-              </span>
-              <span className="tag">已加载</span>
-            </button>
-            <dl className="metadata-list compact">
-              <div>
-                <dt>项目 ID</dt>
-                <dd>{sampleProject.manifest.id}</dd>
+    <ConfigProvider
+      theme={{
+        algorithm: theme.defaultAlgorithm,
+        token: {
+          borderRadius: 12,
+          colorPrimary: '#1677ff',
+          fontFamily:
+            "Inter, 'Microsoft YaHei', 'PingFang SC', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+        },
+      }}
+    >
+      <main className="workbench-shell" aria-labelledby="workbench-title">
+        <Layout className="workbench-layout">
+          <Sider className="project-sider" width={360} theme="light" aria-label="项目资源树">
+            <Flex className="brand-block" gap={12} align="center">
+              <div className="app-mark" aria-hidden="true">
+                MBSE
               </div>
               <div>
-                <dt>产品边界</dt>
-                <dd>{sampleProject.manifest.productBoundary}</dd>
+                <Text className="section-eyebrow">{workbenchEntry.courseName}</Text>
+                <Title id="workbench-title" level={3} className="brand-title">
+                  {workbenchEntry.productName}
+                </Title>
               </div>
-              <div>
-                <dt>工作区边界</dt>
-                <dd>{sampleProject.manifest.workspaceBoundary}</dd>
-              </div>
-            </dl>
-          </article>
+            </Flex>
 
-          <article id="源材料" className="panel">
-            <div className="panel-heading">
-              <p className="eyebrow">Input Material</p>
-              <h2>源材料</h2>
-            </div>
-            {sampleProject.sourceMaterials.map((material) => (
-              <section className="material-card" key={material.id}>
-                <strong>{material.title}</strong>
-                <p>{material.content.slice(0, 156)}...</p>
-                <code>{material.path}</code>
-              </section>
-            ))}
-          </article>
+            <Card size="small" title="当前项目" className="sider-card">
+              <Button block type="primary" size="large" className="project-open-button">
+                <Space orientation="vertical" size={0} align="start">
+                  <Text className="project-open-title">{sampleProject.manifest.name}</Text>
+                  <Text className="project-open-id">{sampleProject.manifest.id}</Text>
+                </Space>
+              </Button>
+            </Card>
 
-          <article id="确认向导" className="panel wizard-panel">
-            <div className="panel-heading">
-              <p className="eyebrow">Confirm Wizard</p>
-              <h2>确认向导</h2>
-            </div>
-            <ol className="step-list">
-              <li className="done">导入天问二号材料</li>
-              <li className="done">读取项目元数据</li>
-              <li>后续切片确认使命、需求、分系统和关系</li>
-            </ol>
-          </article>
+            <Card
+              size="small"
+              title="项目资源"
+              className="sider-card resource-card"
+              aria-label="模型工件资源树"
+            >
+              <Tree
+                className="resource-tree"
+                defaultExpandAll
+                selectable={false}
+                treeData={resourceTreeData}
+              />
+            </Card>
 
-          <article id="模型工件" className="panel artifact-panel">
-            <div className="panel-heading">
-              <p className="eyebrow">Model Artifacts</p>
-              <h2>模型工件</h2>
-            </div>
-            <ul className="artifact-list">
-              <li>
-                <span>
-                  <strong>SysML v2 文本</strong>
-                  <small>最小模型源占位</small>
-                </span>
-                <code>{sysmlArtifact?.path}</code>
-              </li>
-              <li>
-                <span>
-                  <strong>JSON 视图模型</strong>
-                  <small>前端渲染契约占位</small>
-                </span>
-                <code>{viewModelArtifact?.path}</code>
-              </li>
-            </ul>
-          </article>
+            <Alert
+              className="runtime-alert"
+              icon={<DesktopOutlined />}
+              title="Tauri 桌面壳已运行"
+              description="当前工作台加载内置天问二号样例项目；具体建模流程由后续切片接入。"
+              type="success"
+              showIcon
+            />
+          </Sider>
 
-          <article id="视图入口" className="panel view-entry-panel">
-            <div className="panel-heading">
-              <p className="eyebrow">View Launcher</p>
-              <h2>视图入口</h2>
-            </div>
-            <div className="view-entry-grid">
-              {viewEntries.map((view) => (
-                <button
-                  className="view-entry-card"
-                  disabled={view.status !== '可打开'}
-                  key={view.id}
-                  type="button"
-                >
-                  <span>{view.kind}</span>
-                  <strong>{view.title}</strong>
-                  <small>
-                    {view.nodeCount} 个节点 / {view.edgeCount} 条关系 · {view.status}
-                  </small>
-                </button>
-              ))}
-            </div>
-          </article>
+          <Layout className="workspace-layout">
+            <Header className="workspace-header">
+              <Flex justify="space-between" align="center" gap={24} wrap="wrap">
+                <div>
+                  <Text className="section-eyebrow">课程大实践项目入口</Text>
+                  <Title level={2} className="workspace-title">
+                    {sampleProject.manifest.name}
+                  </Title>
+                </div>
+                <Space wrap aria-label="项目操作">
+                  <Button type="primary" icon={<FolderOpenOutlined />} size="large">
+                    打开内置天问二号样例项目
+                  </Button>
+                  <Button disabled size="large">
+                    新建项目 / 导入材料（#3）
+                  </Button>
+                </Space>
+              </Flex>
+            </Header>
 
-          <article id="静态校验" className="panel validation-panel">
-            <div className="panel-heading">
-              <p className="eyebrow">Validation</p>
-              <h2>静态校验</h2>
-            </div>
-            <p>
-              当前切片确认项目契约与工件位置；后续切片会接入 schema、引用、一致性、覆盖、端口和参数校验。
-            </p>
-            <span className="tag neutral">契约测试已覆盖</span>
-          </article>
-        </section>
-      </section>
-    </main>
+            <Content className="workspace-content" aria-label="项目主页工作区">
+              <Row gutter={[16, 16]}>
+                <Col xs={24} xl={12}>
+                  <Card
+                    className="workspace-card full-height-card"
+                    title={
+                      <Space>
+                        <RocketOutlined />
+                        <span>项目主页</span>
+                      </Space>
+                    }
+                    extra={<Tag color="geekblue">Project Home</Tag>}
+                  >
+                    <Paragraph className="lead-copy">{sampleProject.manifest.description}</Paragraph>
+                    <Descriptions
+                      bordered
+                      column={1}
+                      size="middle"
+                      items={[
+                        {
+                          key: 'id',
+                          label: '项目 ID',
+                          children: sampleProject.manifest.id,
+                        },
+                        {
+                          key: 'caseName',
+                          label: '演示案例',
+                          children: sampleProject.manifest.caseName,
+                        },
+                        {
+                          key: 'productBoundary',
+                          label: '产品边界',
+                          children: sampleProject.manifest.productBoundary,
+                        },
+                        {
+                          key: 'workspaceBoundary',
+                          label: '工作区边界',
+                          children: sampleProject.manifest.workspaceBoundary,
+                        },
+                      ]}
+                    />
+                  </Card>
+                </Col>
+
+                <Col xs={24} xl={12}>
+                  <Space orientation="vertical" size={16} className="right-stack">
+                    <Card
+                      className="workspace-card"
+                      title={
+                        <Space>
+                          <SafetyCertificateOutlined />
+                          <span>最小项目契约</span>
+                        </Space>
+                      }
+                      extra={<Tag color="blue">Artifact Contract</Tag>}
+                    >
+                      <Table
+                        className="artifact-table"
+                        columns={artifactColumns}
+                        dataSource={projectResources}
+                        pagination={false}
+                        rowKey="id"
+                        size="small"
+                      />
+                    </Card>
+
+                    <Card
+                      className="workspace-card"
+                      title="后续流程边界"
+                      extra={<Tag color="gold">Deferred Workflow</Tag>}
+                    >
+                      <Steps
+                        className="workflow-steps"
+                        current={-1}
+                        orientation="vertical"
+                        size="small"
+                        items={nextWorkflowSteps}
+                      />
+                    </Card>
+                  </Space>
+                </Col>
+              </Row>
+            </Content>
+
+            <Footer className="workspace-footer">
+              <Space size={16} separator={<span className="footer-separator" />} wrap>
+                <Statistic title="源材料" value={sampleProject.sourceMaterials.length} />
+                <Statistic title="模型工件" value={sampleProject.modelArtifacts.length} />
+                <Statistic title="视图模型" value={sampleProject.viewModelSummary.views.length} />
+                <Text type="secondary">{workbenchEntry.workspaceBoundary}</Text>
+              </Space>
+            </Footer>
+          </Layout>
+        </Layout>
+      </main>
+    </ConfigProvider>
   );
 }

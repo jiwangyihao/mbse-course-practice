@@ -26,6 +26,9 @@ type ProjectFileEntry = StringEntry & {
 };
 
 const repoRoot = normalize(process.cwd());
+const packageJsonPath = resolve(repoRoot, 'package.json');
+const packageLockPath = resolve(repoRoot, 'package-lock.json');
+const mainEntryPath = resolve(repoRoot, 'src/main.tsx');
 const sampleProjectDir = normalize(resolve(repoRoot, 'sample-projects/tianwen-2'));
 const metadataPath = resolve(sampleProjectDir, 'project.json');
 const forbiddenSmallLabPath = normalize('C:/tmp/mbse-course-lab').toLowerCase();
@@ -126,6 +129,32 @@ function expectVisibleText(pattern: RegExp, label: string) {
 }
 
 describe('天问二号样例项目端到端契约', () => {
+  it('前端入口使用 Ant Design 组件库和全局样式基线', () => {
+    const packageJson = readRequiredJsonObject(packageJsonPath, 'package.json');
+    const packageLock = readRequiredJsonObject(packageLockPath, 'package-lock.json');
+    const mainEntry = readRequiredTextFile(mainEntryPath, 'React 入口');
+
+    const dependencies = packageJson.dependencies;
+    const lockPackages = packageLock.packages;
+
+    expect(
+      dependencies !== null && !Array.isArray(dependencies) && typeof dependencies === 'object',
+      'package.json 应声明 dependencies',
+    ).toBe(true);
+    expect(
+      lockPackages !== null && !Array.isArray(lockPackages) && typeof lockPackages === 'object',
+      'package-lock.json 应包含 packages 锁定信息',
+    ).toBe(true);
+
+    const rootLockPackage = (lockPackages as JsonObject)[''];
+    expect(rootLockPackage).toBeDefined();
+    expect((dependencies as JsonObject).antd).toEqual(expect.any(String));
+    expect((dependencies as JsonObject)['@ant-design/icons']).toEqual(expect.any(String));
+    expect(JSON.stringify(rootLockPackage)).toContain('antd');
+    expect(JSON.stringify(rootLockPackage)).toContain('@ant-design/icons');
+    expect(mainEntry).toContain("import 'antd/dist/reset.css';");
+  });
+
   it('读取内置样例项目元数据时声明课程大实践 MBSE 建模工作台边界', () => {
     const metadata = readRequiredJsonObject(metadataPath, '天问二号样例项目元数据');
     const metadataText = collectStringEntries(metadata)
@@ -179,32 +208,29 @@ describe('天问二号样例项目端到端契约', () => {
     }
   });
 
-  it('前端工作台入口呈现课程大实践入口和天问二号模型工件摘要', () => {
+  it('工作台入口呈现项目主页和内置样例资源树', () => {
     render(React.createElement(App));
 
     expect(
       screen.getByRole('heading', { name: /MBSE 建模工作台/ }),
     ).toBeVisible();
-    expectVisibleText(/课程大实践/, '课程大实践入口文案');
-    expectVisibleText(/天问二号/, '天问二号样例入口文案');
-    expectVisibleText(/样例项目|项目元数据/, '样例项目或项目元数据摘要');
-    expectVisibleText(/源材料/, '源材料摘要');
-    expectVisibleText(/SysML v2/, 'SysML v2 模型工件摘要');
-    expectVisibleText(/JSON 视图模型/, 'JSON 视图模型摘要');
-    expectVisibleText(/模型工件/, '模型工件摘要');
+    expectVisibleText(/课程大实践项目入口/, '课程大实践入口文案');
+    expect(screen.getByLabelText(/项目主页工作区/)).toBeVisible();
+    expect(screen.getByLabelText(/项目资源树/)).toBeVisible();
+    expect(screen.getByLabelText(/模型工件资源树/)).toBeVisible();
+    expect(screen.getByRole('button', { name: /打开内置天问二号样例项目/ })).toBeVisible();
+    expectVisibleText(/Tauri 桌面壳已运行/, 'Tauri 桌面壳运行入口提示');
   });
 
-  it('工作台界面提供项目列表、材料、模型工件和视图入口 affordance', () => {
+  it('工作台不把一次性导入和确认向导做成常驻导航或页签', () => {
     render(React.createElement(App));
 
-    expect(screen.getByRole('navigation', { name: /工作台模块导航/ })).toBeVisible();
-    expect(screen.getByRole('heading', { name: /项目列表/ })).toBeVisible();
-    expect(screen.getByRole('button', { name: /天问二号探测器样例项目/ })).toBeVisible();
-    expect(screen.getByRole('heading', { name: /确认向导/ })).toBeVisible();
-    expect(screen.getByRole('heading', { name: /模型工件/ })).toBeVisible();
-    expect(screen.getByRole('heading', { name: /视图入口/ })).toBeVisible();
-    expect(screen.getByRole('button', { name: /需求视图占位/ })).toBeVisible();
-    expect(screen.getByRole('button', { name: /BDD 结构视图占位/ })).toBeVisible();
-    expectVisibleText(/Tauri 桌面壳入口/, 'Tauri 桌面壳运行入口提示');
+    expect(screen.queryByRole('navigation', { name: /工作台模块导航/ })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/打开的工作区标签/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^源材料$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^确认向导$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^视图入口$/ })).not.toBeInTheDocument();
+    expectVisibleText(/一次性新建\/更新项目流程/, '导入材料后续流程说明');
+    expectVisibleText(/确认完成后回到项目工作台/, '确认向导后续流程说明');
   });
 });
