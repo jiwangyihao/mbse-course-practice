@@ -1,0 +1,49 @@
+{
+  "schemaVersion": "0.1.0",
+  "projectId": "tianwen-2",
+  "sourceArtifact": "sample-projects/tianwen-2/model/tianwen-2.sysml",
+  "views": [
+    {
+      "id": "requirements-overview",
+      "title": "需求视图占位",
+      "kind": "requirements",
+      "nodes": [
+        {
+          "id": "REQ-TW2-001",
+          "type": "requirement",
+          "label": "支持近地小行星采样返回任务"
+        }
+      ],
+      "edges": []
+    },
+    {
+      "id": "bdd-overview",
+      "title": "BDD 结构视图占位",
+      "kind": "bdd",
+      "nodes": [
+        {
+          "id": "Tianwen2Probe",
+          "type": "block",
+          "label": "天问二号探测器"
+        },
+        {
+          "id": "TTandCSubsystem",
+          "type": "block",
+          "label": "测控通信分系统"
+        }
+      ],
+      "edges": [
+        {
+          "id": "edge-probe-ttc",
+          "source": "Tianwen2Probe",
+          "target": "TTandCSubsystem",
+          "type": "composition"
+        }
+      ]
+    }
+  ],
+  "validation": {
+    "status": "placeholder",
+    "findings": []
+  }
+}

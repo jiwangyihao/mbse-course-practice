@@ -1,0 +1,33 @@
+{
+  "id": "tianwen-2",
+  "name": "天问二号探测器样例项目",
+  "caseName": "天问二号探测器案例",
+  "course": "《基于模型的系统工程》课程大实践",
+  "productBoundary": "MBSE 建模工作台",
+  "workspaceBoundary": "独立大实践工作区；不属于前 12 个小实验工作区",
+  "description": "用于验证工作台骨架的内置样例项目，包含源材料、项目元数据、最小 SysML v2 文本与 JSON 视图模型占位。",
+  "sourceMaterials": [
+    {
+      "id": "tw2-source-material",
+      "title": "天问二号任务与需求材料",
+      "kind": "mission-brief",
+      "path": "sample-projects/tianwen-2/materials/source-material.md"
+    }
+  ],
+  "modelArtifacts": [
+    {
+      "id": "tw2-minimal-sysml",
+      "title": "最小 SysML v2 模型文本",
+      "kind": "sysml-v2",
+      "path": "sample-projects/tianwen-2/model/tianwen-2.sysml",
+      "placeholder": true
+    },
+    {
+      "id": "tw2-minimal-view-model",
+      "title": "最小 JSON 视图模型",
+      "kind": "json-view-model",
+      "path": "sample-projects/tianwen-2/model/view-model.json",
+      "placeholder": true
+    }
+  ]
+}

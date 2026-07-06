@@ -1,0 +1,181 @@
+:root {
+  color: #172033;
+  background: #edf2f7;
+  font-family:
+    Inter, 'Microsoft YaHei', 'PingFang SC', system-ui, -apple-system, BlinkMacSystemFont,
+    'Segoe UI', sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 960px;
+  min-height: 100vh;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+.app-shell {
+  min-height: 100vh;
+  padding: 48px;
+}
+
+.hero-card,
+.panel {
+  border: 1px solid #d9e2ef;
+  border-radius: 28px;
+  background: #ffffff;
+  box-shadow: 0 24px 70px rgb(15 23 42 / 10%);
+}
+
+.hero-card {
+  padding: 44px;
+}
+
+.eyebrow {
+  margin: 0 0 12px;
+  color: #2563eb;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+h1,
+h2,
+p {
+  margin-top: 0;
+}
+
+h1 {
+  margin-bottom: 18px;
+  font-size: 52px;
+  letter-spacing: -0.04em;
+}
+
+h2 {
+  margin-bottom: 14px;
+  font-size: 24px;
+}
+
+.hero-copy {
+  max-width: 780px;
+  color: #475569;
+  font-size: 18px;
+  line-height: 1.8;
+}
+
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+  margin-top: 28px;
+}
+
+.primary-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #1d4ed8;
+  color: #ffffff;
+  font-weight: 800;
+  padding: 14px 22px;
+  text-decoration: none;
+}
+
+.boundary-note {
+  color: #64748b;
+  font-size: 14px;
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+  margin-top: 28px;
+}
+
+.panel {
+  padding: 28px;
+}
+
+.panel-wide {
+  grid-column: 1 / -1;
+}
+
+.panel-heading {
+  margin-bottom: 12px;
+}
+
+.metadata-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin: 22px 0 0;
+}
+
+.metadata-list div,
+.view-summary-card {
+  border-radius: 18px;
+  background: #f8fafc;
+  padding: 16px;
+}
+
+dt {
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+dd {
+  margin: 6px 0 0;
+  font-weight: 700;
+}
+
+code {
+  display: inline-block;
+  border-radius: 8px;
+  background: #e2e8f0;
+  color: #0f172a;
+  font-size: 13px;
+  padding: 2px 6px;
+}
+
+.artifact-list {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding-left: 20px;
+}
+
+.view-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.view-summary-card {
+  display: grid;
+  gap: 6px;
+}
+
+.view-summary-card span {
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.view-summary-card small {
+  color: #64748b;
+}

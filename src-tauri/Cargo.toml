@@ -1,0 +1,18 @@
+[package]
+name = "mbse-course-practice"
+version = "0.1.0"
+description = "MBSE 建模工作台课程大实践"
+authors = ["jiwangyihao"]
+edition = "2021"
+
+[lib]
+name = "mbse_course_practice_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
