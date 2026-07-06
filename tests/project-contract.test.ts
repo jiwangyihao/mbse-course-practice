@@ -193,4 +193,18 @@ describe('天问二号样例项目端到端契约', () => {
     expectVisibleText(/JSON 视图模型/, 'JSON 视图模型摘要');
     expectVisibleText(/模型工件/, '模型工件摘要');
   });
+
+  it('工作台界面提供项目列表、材料、模型工件和视图入口 affordance', () => {
+    render(React.createElement(App));
+
+    expect(screen.getByRole('navigation', { name: /工作台模块导航/ })).toBeVisible();
+    expect(screen.getByRole('heading', { name: /项目列表/ })).toBeVisible();
+    expect(screen.getByRole('button', { name: /天问二号探测器样例项目/ })).toBeVisible();
+    expect(screen.getByRole('heading', { name: /确认向导/ })).toBeVisible();
+    expect(screen.getByRole('heading', { name: /模型工件/ })).toBeVisible();
+    expect(screen.getByRole('heading', { name: /视图入口/ })).toBeVisible();
+    expect(screen.getByRole('button', { name: /需求视图占位/ })).toBeVisible();
+    expect(screen.getByRole('button', { name: /BDD 结构视图占位/ })).toBeVisible();
+    expectVisibleText(/Tauri 桌面壳入口/, 'Tauri 桌面壳运行入口提示');
+  });
 });

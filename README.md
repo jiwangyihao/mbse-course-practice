@@ -17,11 +17,17 @@ Issue #2 建立最小可运行骨架：
 
 ```bash
 npm install
-npm run dev
 npm run tauri:dev
 ```
 
-如果本机暂未安装 Rust / Cargo，前端与契约测试仍可运行；Tauri 桌面壳需要先安装 Rust 工具链后再执行 `npm run tauri:dev`。
+`npm run tauri:dev` 会启动 Tauri 桌面壳，并由 Tauri 拉起 Vite 前端开发服务器；不要只用浏览器打开 Vite 页面替代桌面应用验收。
+
+如果 Windows 将 `C:\tmp` 识别为不受信任挂载点，Rust 依赖编译可能在默认 `src-tauri/target` 目录遇到 `os error 448`。可把 Cargo target 放到用户目录后再启动 Tauri：
+
+```bash
+set CARGO_TARGET_DIR=%LOCALAPPDATA%\mbse-course-practice-tauri-target
+npm run tauri:dev
+```
 
 ## 验证
 
