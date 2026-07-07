@@ -21,7 +21,9 @@ fn tauri_managed_sidecar_process_reports_running_and_stopped_status() {
         .unwrap_or_default()
         .starts_with("local://agent-sidecar/"));
 
-    let observed = registry.status().expect("Sidecar status should be readable");
+    let observed = registry
+        .status()
+        .expect("Sidecar status should be readable");
     assert_eq!(observed.state, "running");
     assert_eq!(observed.pid, started.pid);
 
@@ -31,7 +33,7 @@ fn tauri_managed_sidecar_process_reports_running_and_stopped_status() {
 }
 
 #[test]
-fn sidecar_process_returns_structured_events_for_extraction_progress_and_errors() {
+fn sidecar_process_returns_structured_events_for_extraction_progress_errors_and_suggestions() {
     let registry = AgentSidecarRegistry::with_executable(sidecar_executable());
     registry.start().expect("Sidecar should start");
 
@@ -46,13 +48,51 @@ fn sidecar_process_returns_structured_events_for_extraction_progress_and_errors(
         .iter()
         .filter_map(|event| event.get("type").and_then(Value::as_str))
         .collect();
+    let suggestion = events
+        .iter()
+        .find(|event| event.get("type").and_then(Value::as_str) == Some("suggestion"))
+        .expect("extraction session should include structured suggestion event");
 
     assert!(event_types.contains(&"progress"));
     assert!(event_types.contains(&"extraction"));
+    assert!(event_types.contains(&"suggestion"));
     assert!(event_types.contains(&"error"));
     assert!(!event_types.contains(&"model-draft"));
-    assert!(events.iter().any(|event| event.get("confirmedData").is_some()));
+    assert!(events
+        .iter()
+        .any(|event| event.get("confirmedData").is_some()));
+    let error_event = events
+        .iter()
+        .find(|event| event.get("type").and_then(Value::as_str) == Some("error"))
+        .expect("extraction session should include a recoverable error event for materials without requirement ids");
+    assert_eq!(
+        error_event.get("recoverable").and_then(Value::as_bool),
+        Some(true)
+    );
     assert!(!events.iter().any(|event| event.get("draft").is_some()));
+    assert_eq!(
+        suggestion.get("target").and_then(Value::as_str),
+        Some("extraction"),
+        "extraction suggestion should identify the target"
+    );
+    assert!(
+        suggestion
+            .get("recommendation")
+            .and_then(Value::as_str)
+            .is_some_and(|recommendation| !recommendation.trim().is_empty()),
+        "extraction suggestion should carry a displayable recommendation field"
+    );
+    assert!(
+        suggestion
+            .get("message")
+            .and_then(Value::as_str)
+            .is_some_and(|message| !message.trim().is_empty()),
+        "extraction suggestion should carry suggestion text for the UI"
+    );
+    assert_eq!(
+        suggestion.get("severity").and_then(Value::as_str),
+        Some("warning")
+    );
 }
 
 #[test]
@@ -67,11 +107,25 @@ fn sidecar_process_draft_reuses_requirements_and_bdd_view_model_contract() {
         .and_then(|event| event.get("confirmedData"))
         .cloned();
     let session = registry
-        .generate_model_draft("REQ-TW2-001：探测器应支持近地小行星采样返回任务。", confirmed_data)
+        .generate_model_draft(
+            "REQ-TW2-001：探测器应支持近地小行星采样返回任务。",
+            confirmed_data,
+        )
         .expect("Sidecar should return draft after candidate confirmation");
-    let draft = session["events"]
+    let events = session["events"]
         .as_array()
-        .and_then(|events| events.iter().find(|event| event["type"] == "model-draft"))
+        .expect("draft session should expose structured events");
+    let event_types: Vec<&str> = events
+        .iter()
+        .filter_map(|event| event.get("type").and_then(Value::as_str))
+        .collect();
+    let suggestion = events
+        .iter()
+        .find(|event| event.get("type").and_then(Value::as_str) == Some("suggestion"))
+        .expect("draft session should include structured suggestion event");
+    let draft = events
+        .iter()
+        .find(|event| event["type"] == "model-draft")
         .and_then(|event| event.get("draft"))
         .expect("model draft event should carry draft");
     let view_kinds: Vec<&str> = draft["viewModel"]["views"]
@@ -81,6 +135,32 @@ fn sidecar_process_draft_reuses_requirements_and_bdd_view_model_contract() {
         .filter_map(|view| view.get("kind").and_then(Value::as_str))
         .collect();
 
+    assert!(event_types.contains(&"suggestion"));
+    assert!(event_types.contains(&"model-draft"));
+    assert!(!event_types.contains(&"extraction"));
+    assert_eq!(
+        suggestion.get("target").and_then(Value::as_str),
+        Some("model-draft"),
+        "draft suggestion should identify the model draft target"
+    );
+    assert!(
+        suggestion
+            .get("recommendation")
+            .and_then(Value::as_str)
+            .is_some_and(|recommendation| !recommendation.trim().is_empty()),
+        "draft suggestion should carry a displayable recommendation field"
+    );
+    assert!(
+        suggestion
+            .get("message")
+            .and_then(Value::as_str)
+            .is_some_and(|message| !message.trim().is_empty()),
+        "draft suggestion should carry suggestion text for the UI"
+    );
+    assert_eq!(
+        suggestion.get("severity").and_then(Value::as_str),
+        Some("info")
+    );
     assert_eq!(draft["validation"]["valid"], true);
     assert!(view_kinds.contains(&"requirements"));
     assert!(view_kinds.contains(&"bdd"));

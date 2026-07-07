@@ -285,6 +285,13 @@ describe('天问二号样例项目端到端契约', () => {
           events: [
             { type: 'progress', message: 'Sidecar 已接收源材料并开始抽取候选项。', percent: 20 },
             { type: 'extraction', message: '已抽取确认候选项。', confirmedData },
+            {
+              type: 'suggestion',
+              message: '修正建议：请补全 REQ-TW2-004 与测控通信分系统的材料出处。',
+              target: 'extraction',
+              recommendation: '确认抽取结果前，请检查 REQ-TW2-004 的追溯关系是否覆盖测控通信分系统。',
+              severity: 'warning',
+            },
           ],
         };
       }
@@ -294,6 +301,13 @@ describe('天问二号样例项目端到端契约', () => {
           events: [
             { type: 'progress', message: '已生成 SysML v2 与视图模型草案。', percent: 80 },
             { type: 'model-draft', message: '模型草案已通过基础 schema 与引用校验。', draft },
+            {
+              type: 'suggestion',
+              message: '修正建议：模型草案需复核 BDD 结构视图中的追溯覆盖。',
+              target: 'model-draft',
+              recommendation: '确认最终草案前，请复核需求视图到 BDD 结构视图的追溯覆盖。',
+              severity: 'info',
+            },
           ],
         };
       }
@@ -309,11 +323,14 @@ describe('天问二号样例项目端到端契约', () => {
     expect(screen.getByText(/候选需求/)).toBeVisible();
     expect(screen.getByText(/候选分系统/)).toBeVisible();
     expect(screen.getByText(/REQ-TW2-001/)).toBeVisible();
-    expect(screen.getByText(/REQ-TW2-004/)).toBeVisible();
+    expect(screen.getAllByText(/REQ-TW2-004/).length).toBeGreaterThan(0);
     expect(screen.getByText(/航天器平台/)).toBeVisible();
-    expect(screen.getByText(/测控通信分系统/)).toBeVisible();
+    expect(screen.getAllByText(/测控通信分系统/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/^修正建议$/)).toBeVisible();
+    expect(screen.getByText(/^warning$/)).toBeVisible();
 
     fireEvent.click(screen.getByRole('button', { name: /确认 Agent 输出并生成模型草案/ }));
+    expect(await screen.findByText(/^info$/)).toBeVisible();
     fireEvent.click(await screen.findByRole('button', { name: /^确认 Agent 输出$/ }));
 
     expect(await screen.findByText(/SysML v2 文本/)).toBeVisible();

@@ -100,13 +100,20 @@ describe('Agent Sidecar 客户端契约', () => {
     const confirmedData = extractTianwen2ConfirmedData(sourceText);
     const events: AgentSidecarEvent[] = [
       { type: 'progress', message: 'Sidecar 已完成源材料切分', percent: 25 },
+      {
+        type: 'suggestion',
+        message: '建议补全测控通信分系统与 REQ-TW2-004 的追溯关系',
+        target: 'extraction',
+        recommendation: '请确认 REQ-TW2-004 是否应追溯到测控通信分系统，并补充材料出处。',
+        severity: 'warning',
+      },
       { type: 'extraction', message: '已抽取确认候选项', confirmedData },
       { type: 'error', message: '演示用可展示错误：某段材料缺少需求编号', recoverable: true },
     ];
     const session = {
       sessionId: 'agent-extraction-session-issue-4',
       events,
-      stdout: '{"events":[{"type":"progress","message":"来自 stdout 的错误进度"}]}',
+      stdout: '{"events":[{"type":"suggestion","message":"来自 stdout 的修正建议不应被采信"}]}',
     } satisfies AgentModelingSession & { stdout: string };
     const invoke = async <T,>(command: string, args?: Record<string, unknown>): Promise<T> => {
       calls.push({ command, args });
@@ -125,13 +132,14 @@ describe('Agent Sidecar 客户端契约', () => {
       { command: 'extract_agent_candidates', args: { sourceText } },
     ]);
     expect(Array.isArray(result.events), '建模会话应暴露结构化事件数组，UI 不应从 stdout 字符串反解状态').toBe(true);
-    expect(result.events.map((event) => event.type), '抽取阶段应只返回进度、抽取结果和可展示错误，不应提前生成模型草案').toEqual(
-      expect.arrayContaining(['progress', 'extraction', 'error']),
+    expect(result.events.map((event) => event.type), '抽取阶段应只返回进度、抽取结果、修正建议和可展示错误，不应提前生成模型草案').toEqual(
+      expect.arrayContaining(['progress', 'extraction', 'suggestion', 'error']),
     );
     expect(result.events.map((event) => event.type)).not.toContain('model-draft');
 
     const progressEvent = requireEvent(result.events, 'progress');
     const extractionEvent = requireEvent(result.events, 'extraction');
+    const suggestionEvent = requireEvent(result.events, 'suggestion');
     const errorEvent = requireEvent(result.events, 'error');
 
     expect(progressEvent.message, '进度文案应来自结构化 progress 事件字段，而不是 stdout 文本').toBe(
@@ -141,6 +149,13 @@ describe('Agent Sidecar 客户端契约', () => {
       expect.arrayContaining(['REQ-TW2-001', 'REQ-TW2-004']),
     );
     expect(errorEvent.message, '错误事件应携带可直接展示给用户的错误说明').toContain('缺少需求编号');
+    expect(suggestionEvent, '修正建议必须作为 result.events 中的结构化事件返回，不能让 UI 从 stdout 文本反解').toMatchObject({
+      message: '建议补全测控通信分系统与 REQ-TW2-004 的追溯关系',
+      target: 'extraction',
+      recommendation: expect.stringContaining('REQ-TW2-004'),
+      severity: 'warning',
+    });
+    expect(suggestionEvent.recommendation, '修正建议应携带可展示的 recommendation 字段，说明用户需要修正什么').toContain('测控通信分系统');
   });
 
   it('用户确认抽取结果后才请求模型草案', async () => {
@@ -151,6 +166,13 @@ describe('Agent Sidecar 客户端契约', () => {
       sessionId: 'agent-draft-session-issue-4',
       events: [
         { type: 'progress', message: '已生成模型草案', percent: 80 },
+        {
+          type: 'suggestion',
+          message: '建议补强需求到 BDD 模块的追溯覆盖',
+          target: 'model-draft',
+          recommendation: '请检查模型草案中 REQ-TW2-004 到测控通信分系统 block 的追溯覆盖是否完整。',
+          severity: 'info',
+        },
         { type: 'model-draft', message: '已生成可校验模型草案', draft },
       ],
     };
@@ -167,13 +189,19 @@ describe('Agent Sidecar 客户端契约', () => {
     const client = createAgentSidecarClient({ invoke });
     const result = await client.generateDraft(sourceText, confirmedData);
     const modelDraftEvent = requireEvent(result.events, 'model-draft');
+    const suggestionEvent = requireEvent(result.events, 'suggestion');
 
     expect(calls, '生成草案必须在用户确认抽取结果后传入 confirmedData，不能把抽取和草案合成一步').toEqual([
       { command: 'generate_agent_model_draft', args: { sourceText, confirmedData } },
     ]);
-    expect(result.events.map((event) => event.type)).toEqual(expect.arrayContaining(['progress', 'model-draft']));
+    expect(result.events.map((event) => event.type)).toEqual(expect.arrayContaining(['progress', 'suggestion', 'model-draft']));
     expect(result.events.map((event) => event.type)).not.toContain('extraction');
     expect(modelDraftEvent.draft.sysmlText, '模型草案事件应携带可渲染的 SysML v2 文本模型').toContain('package');
+    expect(suggestionEvent, '草案生成阶段应返回指向模型草案修正的结构化建议，不能只给空事件').toMatchObject({
+      target: 'model-draft',
+      recommendation: expect.stringMatching(/追溯覆盖|模型草案|BDD/),
+      severity: 'info',
+    });
   });
 
   it('模型草案事件携带的 JSON 视图模型通过校验并包含 requirements 与 bdd 视图', async () => {
@@ -219,6 +247,13 @@ function mockTauriSidecarForUi() {
     sessionId: 'ui-agent-extraction-session',
     events: [
       { type: 'progress', message: 'Sidecar 已接收源材料并开始抽取候选项。', percent: 20 },
+      {
+        type: 'suggestion',
+        message: '修正建议：请补全 REQ-TW2-004 与测控通信分系统的材料出处。',
+        target: 'extraction',
+        recommendation: '确认抽取结果前，请检查 REQ-TW2-004 的追溯关系是否覆盖测控通信分系统。',
+        severity: 'warning',
+      },
       { type: 'extraction', message: '已抽取确认候选项。', confirmedData },
     ],
   };
@@ -226,6 +261,13 @@ function mockTauriSidecarForUi() {
     sessionId: 'ui-agent-draft-session',
     events: [
       { type: 'progress', message: '已生成 SysML v2 与视图模型草案。', percent: 80 },
+      {
+        type: 'suggestion',
+        message: '修正建议：模型草案需复核 BDD 结构视图中的追溯覆盖。',
+        target: 'model-draft',
+        recommendation: '确认最终草案前，请复核需求视图到 BDD 结构视图的追溯覆盖。',
+        severity: 'info',
+      },
       { type: 'model-draft', message: '模型草案已通过基础 schema 与引用校验。', draft },
     ],
   };
@@ -257,11 +299,18 @@ describe('Agent Sidecar 用户路径契约', () => {
 
     const dialog = await screen.findByRole('dialog', { name: /材料导入与确认向导/ });
 
+    expect(within(dialog).getByText(/^修正建议$/), '用户确认抽取结果前应看到专门的修正建议区域标题，而不是只能读结构化事件流水').toBeVisible();
+    expect(within(dialog).getByText(/REQ-TW2-004.*测控通信分系统|测控通信分系统.*REQ-TW2-004/), '抽取阶段修正建议应展示具体建议内容，帮助用户决定是否确认 Agent 输出').toBeVisible();
+    expect(within(dialog).getByText(/^warning$/), '抽取阶段修正建议应展示 severity，帮助用户判断处理优先级').toBeVisible();
     expect(within(dialog).getByRole('button', { name: /确认 Agent 输出并生成模型草案/ }), '用户必须先确认 Agent 抽取结果，再生成模型草案').toBeEnabled();
     expect(within(dialog).getByRole('button', { name: /拒绝 Agent 输出/ }), '用户必须能拒绝 Agent 输出并返回人工确认路径').toBeEnabled();
 
     fireEvent.click(within(dialog).getByRole('button', { name: /确认 Agent 输出并生成模型草案/ }));
-    fireEvent.click(await within(dialog).findByRole('button', { name: /^确认 Agent 输出$/ }));
+    const draftDialog = await screen.findByRole('dialog', { name: /材料导入与确认向导/ });
+    expect(within(draftDialog).getByText(/^修正建议$/), '生成草案后最终确认前仍应展示草案阶段修正建议区域标题').toBeVisible();
+    expect(within(draftDialog).getByText(/BDD 结构视图.*追溯覆盖|追溯覆盖.*BDD 结构视图/), '草案阶段修正建议应展示模型草案修正内容，而不是空事件').toBeVisible();
+    expect(within(draftDialog).getByText(/^info$/), '草案阶段修正建议应展示 severity，保持结构化事件字段可见').toBeVisible();
+    fireEvent.click(await within(draftDialog).findByRole('button', { name: /^确认 Agent 输出$/ }));
 
     expect(await screen.findByText(/SysML v2 文本/), '确认 Agent 输出后应复用 #3 的 SysML v2 展示区').toBeVisible();
     expect(screen.getByText(/JSON 视图模型/), '确认 Agent 输出后应复用 #3 的 JSON 视图模型展示区').toBeVisible();

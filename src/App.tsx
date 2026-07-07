@@ -609,6 +609,7 @@ function AgentDraftReview({
   const extractionEvent = findAgentEvent(session.events, 'extraction');
   const draftEvent = findAgentEvent(session.events, 'model-draft');
   const errorEvents = session.events.filter((event) => event.type === 'error');
+  const suggestionEvents = session.events.filter((event) => event.type === 'suggestion');
 
   return (
     <Space orientation="vertical" size={12} className="agent-draft-review">
@@ -626,8 +627,8 @@ function AgentDraftReview({
         <div className="agent-event-list">
           {session.events.map((event, index) => (
             <div className="agent-event-row" key={`${event.type}-${index}`}>
-              <Tag color={event.type === 'error' ? 'error' : event.type === 'model-draft' ? 'success' : 'blue'}>{event.type}</Tag>
-              <Text>{event.message}</Text>
+              <Tag color={event.type === 'error' ? 'red' : event.type === 'suggestion' ? 'gold' : event.type === 'model-draft' ? 'green' : 'blue'}>{event.type}</Tag>
+              <Text>{event.type === 'suggestion' ? '修正建议已返回' : event.message}</Text>
             </div>
           ))}
         </div>
@@ -668,6 +669,19 @@ function AgentDraftReview({
               { key: 'validation', label: '静态校验', children: draftEvent.draft.validation.valid ? '通过' : '失败' },
             ]}
           />
+        </Card>
+      ) : null}
+      {suggestionEvents.length > 0 ? (
+        <Card size="small" title="修正建议">
+          <div className="candidate-list">
+            {suggestionEvents.map((event, index) => (
+              <div className="candidate-row" key={`${event.type}-${index}`}>
+                <Tag color={event.severity === 'warning' ? 'gold' : 'blue'}>{event.target}</Tag>
+                <Tag color={event.severity === 'warning' ? 'gold' : 'blue'}>{event.severity}</Tag>
+                <Text>{event.recommendation}</Text>
+              </div>
+            ))}
+          </div>
         </Card>
       ) : null}
       {errorEvents.map((event, index) => (

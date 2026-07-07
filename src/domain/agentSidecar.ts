@@ -22,6 +22,13 @@ export type AgentSidecarEvent =
       confirmedData: ConfirmedTianwen2Data;
     }
   | {
+      type: 'suggestion';
+      message: string;
+      target: 'extraction' | 'model-draft';
+      recommendation: string;
+      severity: 'info' | 'warning';
+    }
+  | {
       type: 'model-draft';
       message: string;
       draft: ModelGenerationResult;

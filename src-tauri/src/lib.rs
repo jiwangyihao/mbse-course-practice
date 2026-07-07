@@ -14,17 +14,23 @@ fn workbench_entry() -> Value {
 }
 
 #[tauri::command]
-fn start_agent_sidecar(registry: tauri::State<'_, AgentSidecarRegistry>) -> Result<AgentSidecarStatus, String> {
+fn start_agent_sidecar(
+    registry: tauri::State<'_, AgentSidecarRegistry>,
+) -> Result<AgentSidecarStatus, String> {
     registry.start()
 }
 
 #[tauri::command]
-fn stop_agent_sidecar(registry: tauri::State<'_, AgentSidecarRegistry>) -> Result<AgentSidecarStatus, String> {
+fn stop_agent_sidecar(
+    registry: tauri::State<'_, AgentSidecarRegistry>,
+) -> Result<AgentSidecarStatus, String> {
     registry.stop()
 }
 
 #[tauri::command]
-fn agent_sidecar_status(registry: tauri::State<'_, AgentSidecarRegistry>) -> Result<AgentSidecarStatus, String> {
+fn agent_sidecar_status(
+    registry: tauri::State<'_, AgentSidecarRegistry>,
+) -> Result<AgentSidecarStatus, String> {
     registry.status()
 }
 

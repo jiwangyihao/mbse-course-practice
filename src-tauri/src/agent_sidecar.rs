@@ -111,7 +111,11 @@ impl AgentSidecarRegistry {
             .extract_candidates(source_text)
     }
 
-    pub fn generate_model_draft(&self, source_text: &str, confirmed_data: Option<Value>) -> Result<Value, String> {
+    pub fn generate_model_draft(
+        &self,
+        source_text: &str,
+        confirmed_data: Option<Value>,
+    ) -> Result<Value, String> {
         let mut sidecar_slot = self
             .sidecar
             .lock()
@@ -199,7 +203,9 @@ impl LocalAgentSidecar {
             state: "running",
             pid: Some(self.child.id()),
             endpoint: Some(format!("local://agent-sidecar/{}", self.runtime_id)),
-            message: Some("Agent Sidecar 子进程已由 Tauri 托管，结构化事件由 Sidecar 协议返回。".to_string()),
+            message: Some(
+                "Agent Sidecar 子进程已由 Tauri 托管，结构化事件由 Sidecar 协议返回。".to_string(),
+            ),
         }
     }
 
@@ -215,7 +221,11 @@ impl LocalAgentSidecar {
             .ok_or_else(|| "Agent Sidecar 响应缺少 session。".to_string())
     }
 
-    fn generate_model_draft(&mut self, source_text: &str, confirmed_data: Option<&Value>) -> Result<Value, String> {
+    fn generate_model_draft(
+        &mut self,
+        source_text: &str,
+        confirmed_data: Option<&Value>,
+    ) -> Result<Value, String> {
         let response = self.request(json!({
             "action": "generate-model-draft",
             "sourceText": source_text,
@@ -381,6 +391,13 @@ fn build_extraction_session(source_text: &str) -> Value {
             "message": "已抽取确认候选项。",
             "confirmedData": confirmed_data
         }),
+        json!({
+            "type": "suggestion",
+            "message": "建议补全测控通信分系统与 REQ-TW2-004 的追溯关系。",
+            "target": "extraction",
+            "recommendation": "请确认 REQ-TW2-004 是否应追溯到测控通信分系统，并补充材料出处。",
+            "severity": "warning"
+        }),
     ];
 
     if !source_text.contains("REQ-") {
@@ -407,6 +424,13 @@ fn build_draft_session(confirmed_data: &Value) -> Value {
                 "type": "progress",
                 "message": "已生成 SysML v2 与视图模型草案。",
                 "percent": 80
+            },
+            {
+                "type": "suggestion",
+                "message": "建议补强需求到 BDD 模块的追溯覆盖。",
+                "target": "model-draft",
+                "recommendation": "请检查模型草案中 REQ-TW2-004 到测控通信分系统 block 的追溯覆盖是否完整。",
+                "severity": "info"
             },
             {
                 "type": "model-draft",
@@ -519,7 +543,10 @@ fn infer_mission(source_text: &str) -> String {
         .filter(|line| {
             !line.is_empty()
                 && !line.starts_with("REQ-")
-                && (line.contains("小行星") || line.contains("彗星") || line.contains("采样返回") || line.contains("深空"))
+                && (line.contains("小行星")
+                    || line.contains("彗星")
+                    || line.contains("采样返回")
+                    || line.contains("深空"))
         })
         .map(ToString::to_string)
         .collect();
