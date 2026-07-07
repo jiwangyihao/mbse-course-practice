@@ -48,6 +48,8 @@ import {
 } from './domain/modelGeneration';
 import { loadBundledTianwen2Project } from './domain/sampleProject';
 import { workbenchEntry } from './domain/workbench';
+import { createAgentSidecarClient } from './domain/agentSidecar';
+import type { AgentModelingSession, AgentSidecarEvent, AgentSidecarStatus } from './domain/agentSidecar';
 
 const { Header, Sider, Content, Footer } = Layout;
 const { TextArea } = Input;
@@ -55,6 +57,16 @@ const { Paragraph, Text, Title } = Typography;
 
 const sampleProject = loadBundledTianwen2Project();
 const initialSourceText = sampleProject.sourceMaterials[0]?.content ?? '';
+const agentSidecarClient = createAgentSidecarClient();
+const initialSidecarStatus: AgentSidecarStatus = {
+  state: 'stopped',
+  pid: null,
+  endpoint: null,
+};
+type TauriRuntimeWindow = Window & {
+  __TAURI_INTERNALS__?: unknown;
+};
+
 
 const baseProjectResources = [
   ...sampleProject.sourceMaterials.map((material) => ({
@@ -122,6 +134,40 @@ export default function App() {
   const [sourceText, setSourceText] = useState(initialSourceText);
   const [confirmedData, setConfirmedData] = useState<ConfirmedTianwen2Data | null>(null);
   const [generatedArtifacts, setGeneratedArtifacts] = useState<ModelGenerationResult | null>(null);
+  const [sidecarStatus, setSidecarStatus] = useState<AgentSidecarStatus>(initialSidecarStatus);
+  const [agentSession, setAgentSession] = useState<AgentModelingSession | null>(null);
+  const [isAgentBusy, setAgentBusy] = useState(false);
+  const [agentError, setAgentError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!hasTauriRuntime()) {
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    void agentSidecarClient
+      .status()
+      .then((status) => {
+        if (!cancelled) {
+          setSidecarStatus((current) => (isSameSidecarStatus(current, status) ? current : status));
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setSidecarStatus({
+            state: 'error',
+            pid: null,
+            endpoint: null,
+            message: error instanceof Error ? error.message : 'Agent Sidecar 状态查询失败。',
+          });
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const projectResources = useMemo(
     () => [
@@ -174,11 +220,61 @@ export default function App() {
   );
 
   function openImportWizard() {
+    setAgentError(null);
     setImportOpen(true);
   }
 
   function extractCandidates() {
+    setAgentSession(null);
     setConfirmedData(extractTianwen2ConfirmedData(sourceText));
+  }
+
+  async function startAgentSidecar() {
+    setAgentBusy(true);
+    setAgentError(null);
+    try {
+      setSidecarStatus(await agentSidecarClient.start());
+    } catch (error) {
+      setAgentError(error instanceof Error ? error.message : 'Agent Sidecar 启动失败。');
+    } finally {
+      setAgentBusy(false);
+    }
+  }
+
+  async function stopAgentSidecar() {
+    setAgentBusy(true);
+    setAgentError(null);
+    try {
+      setSidecarStatus(await agentSidecarClient.stop());
+    } catch (error) {
+      setAgentError(error instanceof Error ? error.message : 'Agent Sidecar 停止失败。');
+    } finally {
+      setAgentBusy(false);
+    }
+  }
+
+  async function ensureAgentSidecarRunning() {
+    if (sidecarStatus.state !== 'running') {
+      setSidecarStatus(await agentSidecarClient.start());
+    }
+  }
+
+  async function extractAgentCandidates() {
+    setAgentBusy(true);
+    setAgentError(null);
+    try {
+      await ensureAgentSidecarRunning();
+      const session = await agentSidecarClient.extractCandidates(sourceText);
+      const extractionEvent = findAgentEvent(session.events, 'extraction');
+      setAgentSession(session);
+      if (extractionEvent) {
+        setConfirmedData(extractionEvent.confirmedData);
+      }
+    } catch (error) {
+      setAgentError(error instanceof Error ? error.message : 'Agent 抽取候选失败。');
+    } finally {
+      setAgentBusy(false);
+    }
   }
 
   function confirmAndGenerate() {
@@ -186,6 +282,38 @@ export default function App() {
     setConfirmedData(nextConfirmedData);
     setGeneratedArtifacts(generateTianwen2ModelArtifacts(nextConfirmedData));
     setImportOpen(false);
+  }
+
+  async function confirmAgentOutput() {
+    const extractionEvent = agentSession ? findAgentEvent(agentSession.events, 'extraction') : undefined;
+    const draftEvent = agentSession ? findAgentEvent(agentSession.events, 'model-draft') : undefined;
+
+    if (draftEvent) {
+      setGeneratedArtifacts(draftEvent.draft);
+      setImportOpen(false);
+      return;
+    }
+
+    if (!extractionEvent) {
+      setAgentError('Agent 输出缺少可确认的抽取结果。');
+      return;
+    }
+
+    setAgentBusy(true);
+    setAgentError(null);
+    try {
+      await ensureAgentSidecarRunning();
+      setAgentSession(await agentSidecarClient.generateDraft(sourceText, extractionEvent.confirmedData));
+    } catch (error) {
+      setAgentError(error instanceof Error ? error.message : 'Agent 模型草案生成失败。');
+    } finally {
+      setAgentBusy(false);
+    }
+  }
+
+  function rejectAgentOutput() {
+    setAgentSession(null);
+    setConfirmedData(null);
   }
 
   return (
@@ -246,6 +374,27 @@ export default function App() {
               type="success"
               showIcon
             />
+
+            <Card size="small" title="Agent Sidecar 状态" className="sider-card sidecar-card">
+              <Space orientation="vertical" size={8} className="sidecar-status">
+                <Space wrap>
+                  <Tag color={sidecarStatus.state === 'running' ? 'success' : sidecarStatus.state === 'error' ? 'error' : 'default'}>
+                    {sidecarStatus.state}
+                  </Tag>
+                  <Text type="secondary">{sidecarStatus.endpoint ?? '未连接本地 Sidecar'}</Text>
+                </Space>
+                {sidecarStatus.message ? <Text type="secondary">{sidecarStatus.message}</Text> : null}
+                {agentError ? <Alert type="error" showIcon message={agentError} /> : null}
+                <Space wrap>
+                  <Button size="small" onClick={startAgentSidecar} loading={isAgentBusy}>
+                    启动 Agent Sidecar
+                  </Button>
+                  <Button size="small" onClick={stopAgentSidecar} disabled={isAgentBusy}>
+                    停止 Agent Sidecar
+                  </Button>
+                </Space>
+              </Space>
+            </Card>
           </Sider>
 
           <Layout className="workspace-layout">
@@ -378,6 +527,7 @@ export default function App() {
         width={920}
         transitionName=""
         maskTransitionName=""
+        destroyOnHidden
       >
         <Space orientation="vertical" size={16} className="import-wizard">
           <Alert
@@ -386,7 +536,11 @@ export default function App() {
             title="一次性确认向导"
             description="粘贴或使用内置天问二号材料，抽取结构化候选项；确认后生成模型工件并回到项目工作台。"
           />
-          {confirmedData ? null : (
+          {agentSession ? (
+            <AgentDraftReview session={agentSession} onConfirm={confirmAgentOutput} onReject={rejectAgentOutput} />
+          ) : confirmedData ? (
+            <CandidateReview confirmedData={confirmedData} onConfirm={confirmAndGenerate} />
+          ) : (
             <>
               <TextArea
                 aria-label="源材料粘贴内容"
@@ -394,13 +548,13 @@ export default function App() {
                 onChange={(event) => setSourceText(event.target.value)}
                 rows={7}
               />
-              <Button type="primary" onClick={extractCandidates}>
-                抽取候选
-              </Button>
+              <Space wrap>
+                <Button type="primary" onClick={extractAgentCandidates} loading={isAgentBusy}>
+                  抽取候选
+                </Button>
+              </Space>
             </>
           )}
-
-          {confirmedData ? <CandidateReview confirmedData={confirmedData} onConfirm={confirmAndGenerate} /> : null}
         </Space>
       </Modal>
     </ConfigProvider>
@@ -439,6 +593,92 @@ function CandidateReview({
       <Button type="primary" onClick={onConfirm}>
         确认生成
       </Button>
+    </Space>
+  );
+}
+
+function AgentDraftReview({
+  session,
+  onConfirm,
+  onReject,
+}: {
+  session: AgentModelingSession;
+  onConfirm: () => void | Promise<void>;
+  onReject: () => void;
+}) {
+  const extractionEvent = findAgentEvent(session.events, 'extraction');
+  const draftEvent = findAgentEvent(session.events, 'model-draft');
+  const errorEvents = session.events.filter((event) => event.type === 'error');
+
+  return (
+    <Space orientation="vertical" size={12} className="agent-draft-review">
+      <Alert
+        type="success"
+        showIcon
+        title={draftEvent ? 'Agent 模型草案' : 'Agent 抽取结果'}
+        description={
+          draftEvent
+            ? 'Sidecar 已在用户确认抽取结果后返回模型草案；确认后复用现有模型视图与校验路径。'
+            : 'Sidecar 已返回结构化抽取结果；请先确认或拒绝候选项，再生成模型草案。'
+        }
+      />
+      <Card size="small" title="结构化事件流">
+        <div className="agent-event-list">
+          {session.events.map((event, index) => (
+            <div className="agent-event-row" key={`${event.type}-${index}`}>
+              <Tag color={event.type === 'error' ? 'error' : event.type === 'model-draft' ? 'success' : 'blue'}>{event.type}</Tag>
+              <Text>{event.message}</Text>
+            </div>
+          ))}
+        </div>
+      </Card>
+      {extractionEvent ? (
+        <>
+          <Card size="small" title="候选使命">
+            <Paragraph>{extractionEvent.confirmedData.mission}</Paragraph>
+          </Card>
+          <Card size="small" title="候选需求">
+            <div className="candidate-list">
+              {extractionEvent.confirmedData.requirements.map((requirement) => (
+                <div className="candidate-row" key={requirement.id}>
+                  <Text code>{requirement.id}</Text>
+                  <Text strong>{requirement.title}</Text>
+                </div>
+              ))}
+            </div>
+          </Card>
+          <Card size="small" title="候选分系统">
+            <Space wrap>
+              {extractionEvent.confirmedData.subsystems.map((subsystem) => (
+                <Tag key={subsystem.id}>{subsystem.name}</Tag>
+              ))}
+            </Space>
+          </Card>
+        </>
+      ) : null}
+      {draftEvent ? (
+        <Card size="small" title="模型草案摘要">
+          <Descriptions
+            bordered
+            size="small"
+            column={1}
+            items={[
+              { key: 'sysml', label: 'SysML v2', children: `${draftEvent.draft.sysmlText.length} 字符` },
+              { key: 'views', label: '视图模型草案', children: `${draftEvent.draft.viewModel.views.length} 个视图` },
+              { key: 'validation', label: '静态校验', children: draftEvent.draft.validation.valid ? '通过' : '失败' },
+            ]}
+          />
+        </Card>
+      ) : null}
+      {errorEvents.map((event, index) => (
+        <Alert key={index} type="warning" showIcon message={event.message} />
+      ))}
+      <Space wrap>
+        <Button onClick={onReject}>拒绝 Agent 输出</Button>
+        <Button type="primary" onClick={onConfirm} disabled={!draftEvent && !extractionEvent}>
+          {draftEvent ? '确认 Agent 输出' : '确认 Agent 输出并生成模型草案'}
+        </Button>
+      </Space>
     </Space>
   );
 }
@@ -605,4 +845,19 @@ function ModelViewCard({ view }: { view: GeneratedView }) {
       </ReactFlowProvider>
     </Card>
   );
+}
+
+function findAgentEvent<TType extends AgentSidecarEvent['type']>(
+  events: AgentSidecarEvent[],
+  type: TType,
+): Extract<AgentSidecarEvent, { type: TType }> | undefined {
+  return events.find((event): event is Extract<AgentSidecarEvent, { type: TType }> => event.type === type);
+}
+
+function isSameSidecarStatus(left: AgentSidecarStatus, right: AgentSidecarStatus) {
+  return left.state === right.state && left.pid === right.pid && left.endpoint === right.endpoint && left.message === right.message;
+}
+
+function hasTauriRuntime() {
+  return typeof window !== 'undefined' && Boolean((window as TauriRuntimeWindow).__TAURI_INTERNALS__);
 }

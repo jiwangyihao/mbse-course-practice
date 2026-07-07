@@ -3,7 +3,15 @@ import { extname, isAbsolute, normalize, resolve } from 'node:path';
 import process from 'node:process';
 import React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
+import { vi } from 'vitest';
+import { extractTianwen2ConfirmedData, generateTianwen2ModelArtifacts } from '../src/domain/modelGeneration';
 import App from '../src/App';
+
+const tauriInvokeMock = vi.hoisted(() => vi.fn());
+
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: tauriInvokeMock,
+}));
 
 type JsonValue =
   | null
@@ -250,7 +258,7 @@ describe('天问二号样例项目端到端契约', () => {
     expectVisibleText(/确认完成后回到项目工作台/, '确认向导后续流程说明');
   });
 
-  it('导入天问二号材料后确认生成需求视图和 BDD 结构视图', () => {
+  it('导入天问二号材料后确认生成需求视图和 BDD 结构视图', async () => {
     render(React.createElement(App));
 
     const importButton = screen.getByRole('button', { name: /新建项目 \/ 导入材料（#3）/ });
@@ -267,13 +275,37 @@ describe('天问二号样例项目端到端契约', () => {
       'REQ-TW2-004：探测器应通过测控通信分系统完成深空测控、数据下传和遥测接收。',
       '航天器平台应为载荷、推进、能源、热控和测控通信分系统提供统一承载。',
     ].join('\n');
+    const confirmedData = extractTianwen2ConfirmedData(sourceMaterial);
+    const draft = generateTianwen2ModelArtifacts(confirmedData);
+    tauriInvokeMock.mockImplementation(async (command: string) => {
+      if (command === 'start_agent_sidecar') return { state: 'running', pid: 4242, endpoint: 'local://agent-sidecar/test' };
+      if (command === 'extract_agent_candidates') {
+        return {
+          sessionId: 'contract-extraction-session',
+          events: [
+            { type: 'progress', message: 'Sidecar 已接收源材料并开始抽取候选项。', percent: 20 },
+            { type: 'extraction', message: '已抽取确认候选项。', confirmedData },
+          ],
+        };
+      }
+      if (command === 'generate_agent_model_draft') {
+        return {
+          sessionId: 'contract-draft-session',
+          events: [
+            { type: 'progress', message: '已生成 SysML v2 与视图模型草案。', percent: 80 },
+            { type: 'model-draft', message: '模型草案已通过基础 schema 与引用校验。', draft },
+          ],
+        };
+      }
+      throw new Error(`未预期的 Tauri 命令：${command}`);
+    });
 
     fireEvent.change(screen.getByRole('textbox', { name: /源材料|材料内容|粘贴/ }), {
       target: { value: sourceMaterial },
     });
     fireEvent.click(screen.getByRole('button', { name: /抽取候选|生成候选|开始抽取/ }));
 
-    expect(screen.getByText(/候选使命/)).toBeVisible();
+    expect(await screen.findByText(/候选使命/)).toBeVisible();
     expect(screen.getByText(/候选需求/)).toBeVisible();
     expect(screen.getByText(/候选分系统/)).toBeVisible();
     expect(screen.getByText(/REQ-TW2-001/)).toBeVisible();
@@ -281,9 +313,10 @@ describe('天问二号样例项目端到端契约', () => {
     expect(screen.getByText(/航天器平台/)).toBeVisible();
     expect(screen.getByText(/测控通信分系统/)).toBeVisible();
 
-    fireEvent.click(screen.getByRole('button', { name: /确认生成|确认并生成/ }));
+    fireEvent.click(screen.getByRole('button', { name: /确认 Agent 输出并生成模型草案/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /^确认 Agent 输出$/ }));
 
-    expect(screen.getByText(/SysML v2 文本/)).toBeVisible();
+    expect(await screen.findByText(/SysML v2 文本/)).toBeVisible();
     expect(screen.getByText(/JSON 视图模型/)).toBeVisible();
     expect(screen.getByText(/需求视图/)).toBeVisible();
     expect(screen.getByText(/BDD 结构视图/)).toBeVisible();
