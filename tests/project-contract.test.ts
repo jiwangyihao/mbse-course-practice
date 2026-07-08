@@ -308,6 +308,41 @@ describe('天问二号样例项目端到端契约', () => {
     }
   });
 
+  it('内置样例 JSON 视图模型同步包含参数约束视图', () => {
+    const sampleViewModel = readRequiredJsonObject(resolve(sampleProjectDir, 'model/view-model.json'), '天问二号 JSON 视图模型');
+    const views = recordArray(sampleViewModel.views);
+    const parameterView = views.find((view) =>
+      /parameter-constraints|参数约束/i.test(`${String(view.kind ?? '')} ${String(view.id ?? '')} ${String(view.title ?? '')}`),
+    );
+
+    expect(
+      parameterView,
+      '内置样例 JSON 必须同步提交 parameter-constraints 视图，避免生成器和演示工件漂移',
+    ).toBeDefined();
+    if (!parameterView) return;
+
+    const constraints = recordArray(parameterView.constraints);
+    const parameters = recordArray(parameterView.parameters);
+    const bindings = recordArray(parameterView.bindings);
+    const parameterWithUnit = parameters.find((parameter) =>
+      ['unit', 'unitSymbol', 'unitId'].some((key) => typeof parameter[key] === 'string' && String(parameter[key]).trim() !== ''),
+    );
+    const recordsHaveRelatedElements = (records: ParameterConstraintRecord[]) =>
+      records.every((record) => Array.isArray(record.relatedElementIds) && record.relatedElementIds.length > 0);
+
+    expect(constraints.length, '样例 JSON 参数约束视图必须包含约束数组').toBeGreaterThan(0);
+    expect(parameters.length, '样例 JSON 参数约束视图必须包含参数数组').toBeGreaterThan(0);
+    expect(bindings.length, '样例 JSON 参数约束视图必须包含绑定数组').toBeGreaterThan(0);
+    expect(parameterWithUnit, '样例 JSON 参数必须携带单位字段').toBeDefined();
+    expect(recordsHaveRelatedElements(constraints), '样例 JSON 每条约束必须保留非空 relatedElementIds，供用户追溯相关模型元素').toBe(true);
+    expect(recordsHaveRelatedElements(parameters), '样例 JSON 每个参数必须保留非空 relatedElementIds，供用户追溯相关模型元素').toBe(true);
+    expect(recordsHaveRelatedElements(bindings), '样例 JSON 每条绑定必须保留非空 relatedElementIds，供用户追溯相关模型元素').toBe(true);
+
+    const validation = validateViewModel(sampleViewModel);
+    expect(validation.valid, '内置样例 JSON 视图模型必须通过同一 validateViewModel 确定性校验 seam').toBe(true);
+    expect(validation.errors, '样例 JSON 参数约束视图不应产生 schema、引用或参数完整性错误').toEqual([]);
+  });
+
   it('工作台入口呈现项目主页和内置样例资源树', () => {
     render(React.createElement(App));
 
