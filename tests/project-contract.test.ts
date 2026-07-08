@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { extname, isAbsolute, normalize, resolve } from 'node:path';
 import process from 'node:process';
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { vi } from 'vitest';
 import { extractTianwen2ConfirmedData, generateTianwen2ModelArtifacts } from '../src/domain/modelGeneration';
 import App from '../src/App';
@@ -258,7 +258,7 @@ describe('天问二号样例项目端到端契约', () => {
     expectVisibleText(/确认完成后回到项目工作台/, '确认向导后续流程说明');
   });
 
-  it('导入天问二号材料后确认生成需求视图和 BDD 结构视图', async () => {
+  it('导入天问二号材料后确认生成需求视图、BDD 结构视图、活动图和需求追溯矩阵', async () => {
     render(React.createElement(App));
 
     const importButton = screen.getByRole('button', { name: /新建项目 \/ 导入材料（#3）/ });
@@ -272,7 +272,9 @@ describe('天问二号样例项目端到端契约', () => {
     const sourceMaterial = [
       '天问二号任务面向小行星取样返回和主带彗星探测。',
       'REQ-TW2-001：任务应支持对目标小行星开展近距离探测并完成取样返回。',
+      'REQ-TW2-003：电源与热控分系统应在深空飞行和近距离探测阶段提供能源与热环境保障。',
       'REQ-TW2-004：探测器应通过测控通信分系统完成深空测控、数据下传和遥测接收。',
+      '电源与热控分系统应在深空巡航期间维持安全能源与热控边界。',
       '航天器平台应为载荷、推进、能源、热控和测控通信分系统提供统一承载。',
     ].join('\n');
     const confirmedData = extractTianwen2ConfirmedData(sourceMaterial);
@@ -333,14 +335,38 @@ describe('天问二号样例项目端到端契约', () => {
     expect(await screen.findByText(/^info$/)).toBeVisible();
     fireEvent.click(await screen.findByRole('button', { name: /^确认 Agent 输出$/ }));
 
-    expect(await screen.findByText(/SysML v2 文本/)).toBeVisible();
-    expect(screen.getByText(/JSON 视图模型/)).toBeVisible();
-    expect(screen.getByText(/需求视图/)).toBeVisible();
-    expect(screen.getByText(/BDD 结构视图/)).toBeVisible();
-    expect(screen.getByLabelText(/需求视图 自动布局图/)).toBeVisible();
-    expect(screen.getByLabelText(/BDD 结构视图 自动布局图/)).toBeVisible();
-    expect(screen.getByText(/自动布局/)).toBeVisible();
-    expect(screen.getByText(/Schema 校验通过/)).toBeVisible();
-    expect(screen.getByText(/引用校验通过/)).toBeVisible();
+    await waitFor(() => {
+      expect(
+        screen.queryByRole('dialog', { name: /材料导入与确认向导/ }),
+        '确认 Agent 输出后导入对话框应关闭，后续 #5 断言必须来自项目工作区而不是源材料文本框',
+      ).not.toBeInTheDocument();
+    });
+    const generatedWorkspace = screen.getByText(/SysML v2 文本/).closest('.generated-workspace');
+    expect(generatedWorkspace, '确认后应进入生成模型工作区，#5 断言只在该区域内检查').not.toBeNull();
+    const workspace = within(generatedWorkspace as HTMLElement);
+
+    expect(workspace.getByText(/SysML v2 文本/)).toBeVisible();
+    expect(workspace.getByText(/JSON 视图模型/)).toBeVisible();
+    expect(workspace.getByText(/需求视图/)).toBeVisible();
+    expect(workspace.getByText(/BDD 结构视图/)).toBeVisible();
+    expect(workspace.getByLabelText(/需求视图 自动布局图/)).toBeVisible();
+    expect(workspace.getByLabelText(/BDD 结构视图 自动布局图/)).toBeVisible();
+    expect(workspace.getByText(/活动图/), 'issue #5 验收要求确认后在工作区展示活动图入口，而不是只生成 JSON 数据').toBeVisible();
+    expect(workspace.getByLabelText(/活动图 自动布局图/), '活动图必须通过用户可见的自动布局图画布渲染').toBeVisible();
+    expect(
+      workspace.getAllByText(/活动流|flow|取样返回|数据下传|深空.*(巡航|安全|维持)/).length,
+      '活动图区域必须展示活动流相关文案或行为名称，证明用户能理解活动节点之间的流转',
+    ).toBeGreaterThan(0);
+    expect(workspace.getByText(/需求追溯矩阵/), 'issue #5 验收要求确认后展示需求追溯矩阵').toBeVisible();
+    expect(workspace.getAllByText(/REQ-TW2-003/).length, '追溯矩阵必须展示能源与热控保障需求行').toBeGreaterThan(0);
+    expect(workspace.getAllByText(/REQ-TW2-004/).length, '追溯矩阵必须展示深空测控通信需求行').toBeGreaterThan(0);
+    expect(workspace.getAllByText(/结构元素|spacecraft-platform|ttc-communication|航天器平台|测控通信分系统/).length, '追溯矩阵必须展示结构列').toBeGreaterThan(0);
+    expect(workspace.getAllByText(/行为元素|活动节点|取样返回|数据下传|深空.*(巡航|安全|维持)/).length, '追溯矩阵必须展示行为列').toBeGreaterThan(0);
+    expect(workspace.getAllByText(/已覆盖/).length, '追溯矩阵必须把覆盖单元格以用户可读的已覆盖状态展示').toBeGreaterThan(0);
+    expect(workspace.getAllByText(/未覆盖/).length, '追溯矩阵必须把缺口单元格以用户可读的未覆盖状态展示').toBeGreaterThan(0);
+    expect(workspace.getAllByText(/覆盖校验/).length, '工作区顶部或矩阵区域必须展示覆盖校验状态，供用户发现未覆盖需求').toBeGreaterThan(0);
+    expect(workspace.getByText(/自动布局/)).toBeVisible();
+    expect(workspace.getByText(/Schema 校验通过/)).toBeVisible();
+    expect(workspace.getByText(/引用校验通过/)).toBeVisible();
   });
 });

@@ -12,19 +12,29 @@ export interface ConfirmedSubsystem {
   parentId: string | null;
 }
 
+export interface ConfirmedActivity {
+  id: string;
+  title: string;
+  text: string;
+  requirementIds: string[];
+  performedBy: string[];
+}
+
 export interface ConfirmedTianwen2Data {
   projectId: string;
   packageName: string;
   mission: string;
   requirements: ConfirmedRequirement[];
   subsystems: ConfirmedSubsystem[];
+  activities?: ConfirmedActivity[];
 }
 
 export interface ViewNode {
   id: string;
-  kind: 'mission' | 'requirement' | 'subsystem' | 'system';
+  kind: 'mission' | 'requirement' | 'subsystem' | 'system' | 'activity';
   label: string;
   text?: string;
+  elementId?: string;
   position: {
     x: number;
     y: number;
@@ -33,20 +43,44 @@ export interface ViewNode {
 
 export interface ViewEdge {
   id: string;
-  kind: 'hierarchy' | 'trace' | 'composition';
+  kind: 'hierarchy' | 'trace' | 'composition' | 'flow';
   source: string;
   target: string;
   label?: string;
 }
 
+export interface TraceabilityMatrixColumn {
+  id: string;
+  elementId: string;
+  kind: 'structure' | 'behavior';
+  label: string;
+}
+
+export interface TraceabilityMatrixRow {
+  id: string;
+  requirementId: string;
+  label: string;
+}
+
+export interface TraceabilityMatrixCell {
+  rowId: string;
+  requirementId: string;
+  columnId: string;
+  covered: boolean;
+  evidence?: string;
+}
+
 export interface GeneratedView {
   id: string;
   title: string;
-  kind: 'requirements' | 'bdd';
+  kind: 'requirements' | 'bdd' | 'activity' | 'traceability-matrix';
   layout: 'auto';
-  layoutEngine: 'deterministic-layered-layout';
+  layoutEngine: 'deterministic-layered-layout' | 'matrix-layout';
   nodes: ViewNode[];
   edges: ViewEdge[];
+  rows?: TraceabilityMatrixRow[];
+  columns?: TraceabilityMatrixColumn[];
+  cells?: TraceabilityMatrixCell[];
 }
 
 export interface GeneratedViewModel {
@@ -73,10 +107,52 @@ export interface ViewModelValidationError {
   path: string;
 }
 
+export interface ViewModelValidationFinding {
+  code: 'uncovered-requirement';
+  severity: 'warning';
+  message: string;
+  path: string;
+  elementId: string;
+  requirementId: string;
+  viewId: string;
+}
+
 export interface ViewModelValidationResult {
   valid: boolean;
   errors: ViewModelValidationError[];
+  findings: ViewModelValidationFinding[];
 }
+
+const fallbackActivities: ConfirmedActivity[] = [
+  {
+    id: 'activity-sample-return',
+    title: '近地小行星取样返回',
+    text: '接近目标小行星，执行近距离探测、采样封装与返回准备。',
+    requirementIds: ['REQ-TW2-001'],
+    performedBy: ['sampling-return', 'gnc'],
+  },
+  {
+    id: 'activity-cruise-safety',
+    title: '深空巡航安全维持',
+    text: '在深空巡航阶段维持姿态、能源和热控安全边界。',
+    requirementIds: ['REQ-TW2-002'],
+    performedBy: ['spacecraft-platform', 'power-thermal', 'gnc'],
+  },
+  {
+    id: 'activity-telemetry-downlink',
+    title: '遥测与科学数据下传',
+    text: '通过测控通信链路完成深空测控、数据下传和遥测接收。',
+    requirementIds: ['REQ-TW2-003'],
+    performedBy: ['ttc-communication'],
+  },
+  {
+    id: 'activity-trace-coverage-check',
+    title: '模型工件追溯覆盖校验',
+    text: '检查需求到结构和行为视图的覆盖关系，并把缺口暴露为可操作校验结果。',
+    requirementIds: ['REQ-TW2-004'],
+    performedBy: ['spacecraft-platform', 'ttc-communication'],
+  },
+];
 
 const fallbackRequirements: ConfirmedRequirement[] = [
   {
@@ -123,6 +199,7 @@ export const defaultTianwen2ConfirmedData: ConfirmedTianwen2Data = {
   mission: '天问二号任务面向小行星取样返回和主带彗星扩展探测。',
   requirements: fallbackRequirements,
   subsystems: fallbackSubsystems,
+  activities: fallbackActivities,
 };
 
 export function extractTianwen2ConfirmedData(sourceText: string): ConfirmedTianwen2Data {
@@ -173,11 +250,18 @@ export function generateTianwen2ModelArtifacts(
 
 export function validateViewModel(candidate: unknown): ViewModelValidationResult {
   const errors: ViewModelValidationError[] = [];
+  const findings: ViewModelValidationFinding[] = [];
+  const matrixViews: Array<{
+    id: string;
+    rows: Array<{ id: string; requirementId: string; path: string }>;
+    cells: Array<{ rowId: string; requirementId: string; covered: boolean }>;
+  }> = [];
 
   if (!isRecord(candidate)) {
     return {
       valid: false,
       errors: [{ code: 'schema', message: 'schema 根对象必须是 JSON 对象。', path: '$' }],
+      findings,
     };
   }
 
@@ -191,7 +275,7 @@ export function validateViewModel(candidate: unknown): ViewModelValidationResult
 
   if (!Array.isArray(candidate.views)) {
     errors.push({ code: 'schema', message: 'schema 缺少必需数组 views。', path: '$.views' });
-    return { valid: errors.length === 0, errors };
+    return { valid: false, errors, findings };
   }
 
   candidate.views.forEach((view, viewIndex) => {
@@ -246,13 +330,89 @@ export function validateViewModel(candidate: unknown): ViewModelValidationResult
         }
       }
     });
+
+    if (view.kind !== 'traceability-matrix') {
+      return;
+    }
+
+    if (!Array.isArray(view.rows)) {
+      errors.push({ code: 'schema', message: '追溯矩阵缺少 rows 数组。', path: `${viewPath}.rows` });
+      return;
+    }
+    if (!Array.isArray(view.columns)) {
+      errors.push({ code: 'schema', message: '追溯矩阵缺少 columns 数组。', path: `${viewPath}.columns` });
+      return;
+    }
+    if (!Array.isArray(view.cells)) {
+      errors.push({ code: 'schema', message: '追溯矩阵缺少 cells 数组。', path: `${viewPath}.cells` });
+      return;
+    }
+
+    const rows = view.rows.flatMap((row, rowIndex) => {
+      if (!isRecord(row) || typeof row.id !== 'string' || row.id.trim() === '') {
+        errors.push({ code: 'schema', message: '追溯矩阵 row 缺少 id。', path: `${viewPath}.rows[${rowIndex}].id` });
+        return [];
+      }
+      const requirementId = typeof row.requirementId === 'string' && row.requirementId.trim() !== '' ? row.requirementId : row.id;
+      return [{ id: row.id, requirementId, path: `${viewPath}.rows[${rowIndex}]` }];
+    });
+    const rowIds = new Set(rows.flatMap((row) => [row.id, row.requirementId]));
+    const columnIds = new Set<string>();
+
+    view.columns.forEach((column, columnIndex) => {
+      if (!isRecord(column) || typeof column.id !== 'string' || column.id.trim() === '') {
+        errors.push({ code: 'schema', message: '追溯矩阵 column 缺少 id。', path: `${viewPath}.columns[${columnIndex}].id` });
+        return;
+      }
+      columnIds.add(column.id);
+    });
+
+    const cells = view.cells.flatMap((cell, cellIndex) => {
+      if (!isRecord(cell)) {
+        errors.push({ code: 'schema', message: '追溯矩阵 cell 必须是对象。', path: `${viewPath}.cells[${cellIndex}]` });
+        return [];
+      }
+      const rowId = typeof cell.rowId === 'string' ? cell.rowId : typeof cell.requirementId === 'string' ? cell.requirementId : '';
+      const requirementId = typeof cell.requirementId === 'string' ? cell.requirementId : rowId;
+      const columnId = typeof cell.columnId === 'string' ? cell.columnId : '';
+      if (!rowIds.has(rowId)) {
+        errors.push({ code: 'missing-reference', message: `追溯矩阵引用不存在的需求行：${rowId}。`, path: `${viewPath}.cells[${cellIndex}].rowId` });
+      }
+      if (!columnIds.has(columnId)) {
+        errors.push({ code: 'missing-reference', message: `追溯矩阵引用不存在的列：${columnId}。`, path: `${viewPath}.cells[${cellIndex}].columnId` });
+      }
+      return [{ rowId, requirementId, covered: cell.covered === true }];
+    });
+
+    matrixViews.push({ id: String(view.id ?? `view-${viewIndex}`), rows, cells });
   });
 
-  return { valid: errors.length === 0, errors };
+  for (const matrixView of matrixViews) {
+    for (const row of matrixView.rows) {
+      const hasCoverage = matrixView.cells.some(
+        (cell) => (cell.rowId === row.id || cell.requirementId === row.requirementId) && cell.covered,
+      );
+      if (!hasCoverage) {
+        findings.push({
+          code: 'uncovered-requirement',
+          severity: 'warning',
+          message: `需求 ${row.requirementId} 未覆盖任何结构或行为元素。`,
+          path: row.path,
+          elementId: row.requirementId,
+          requirementId: row.requirementId,
+          viewId: matrixView.id,
+        });
+      }
+    }
+  }
+
+  return { valid: errors.length === 0 && findings.length === 0, errors, findings };
 }
 
 function buildViewModel(confirmedData: ConfirmedTianwen2Data): GeneratedViewModel {
   const subsystemByName = new Map(confirmedData.subsystems.map((subsystem) => [subsystem.name, subsystem]));
+  const activities = confirmedData.activities ?? fallbackActivities;
+  const subsystemById = new Map(confirmedData.subsystems.map((subsystem) => [subsystem.id, subsystem]));
   const tracedSubsystems = new Map<string, ConfirmedSubsystem>();
 
   for (const requirement of confirmedData.requirements) {
@@ -269,6 +429,7 @@ function buildViewModel(confirmedData: ConfirmedTianwen2Data): GeneratedViewMode
     kind: 'requirement',
     label: requirement.title,
     text: requirement.text,
+    elementId: requirement.id,
     position: { x: requirement.parentId === null ? 40 : 320, y: 40 + index * 118 },
   }));
 
@@ -276,6 +437,7 @@ function buildViewModel(confirmedData: ConfirmedTianwen2Data): GeneratedViewMode
     id: subsystem.id,
     kind: 'subsystem',
     label: subsystem.name,
+    elementId: subsystem.id,
     position: { x: 680, y: 40 + index * 118 },
   }));
 
@@ -312,6 +474,7 @@ function buildViewModel(confirmedData: ConfirmedTianwen2Data): GeneratedViewMode
     id: subsystem.id,
     kind: subsystem.parentId === null ? 'system' : 'subsystem',
     label: subsystem.name,
+    elementId: subsystem.id,
     position: subsystem.parentId === null ? { x: 320, y: 40 } : { x: 80 + (index - 1) * 230, y: 220 },
   }));
 
@@ -325,8 +488,74 @@ function buildViewModel(confirmedData: ConfirmedTianwen2Data): GeneratedViewMode
       label: '组成',
     }));
 
+  const activityNodes: ViewNode[] = activities.map((activity, index) => ({
+    id: activity.id,
+    kind: 'activity',
+    label: activity.title,
+    text: activity.text,
+    elementId: activity.id,
+    position: { x: 80 + index * 240, y: 140 },
+  }));
+
+  const activityFlowEdges: ViewEdge[] = activities.slice(0, -1).map((activity, index) => ({
+    id: `flow-${activity.id}-${activities[index + 1].id}`,
+    kind: 'flow',
+    source: activity.id,
+    target: activities[index + 1].id,
+    label: '活动流',
+  }));
+
+  const matrixRows: TraceabilityMatrixRow[] = confirmedData.requirements.map((requirement) => ({
+    id: requirement.id,
+    requirementId: requirement.id,
+    label: requirement.title,
+  }));
+
+  const structureColumns: TraceabilityMatrixColumn[] = confirmedData.subsystems.map((subsystem) => ({
+    id: subsystem.id,
+    elementId: subsystem.id,
+    kind: 'structure',
+    label: subsystem.name,
+  }));
+
+  const behaviorColumns: TraceabilityMatrixColumn[] = activities.map((activity) => ({
+    id: activity.id,
+    elementId: activity.id,
+    kind: 'behavior',
+    label: activity.title,
+  }));
+
+  const structureCells: TraceabilityMatrixCell[] = confirmedData.requirements.flatMap((requirement) =>
+    confirmedData.subsystems.map((subsystem) => {
+      const covered = requirement.tracedTo.includes(subsystem.name);
+      return {
+        rowId: requirement.id,
+        requirementId: requirement.id,
+        columnId: subsystem.id,
+        covered,
+        evidence: covered ? `${requirement.id} satisfy ${subsystem.name}` : undefined,
+      };
+    }),
+  );
+
+  const behaviorCells: TraceabilityMatrixCell[] = confirmedData.requirements.flatMap((requirement) =>
+    activities.map((activity) => {
+      const covered = activity.requirementIds.includes(requirement.id);
+      const performers = activity.performedBy
+        .map((subsystemId) => subsystemById.get(subsystemId)?.name)
+        .filter((name): name is string => Boolean(name));
+      return {
+        rowId: requirement.id,
+        requirementId: requirement.id,
+        columnId: activity.id,
+        covered,
+        evidence: covered ? `${activity.title} 覆盖 ${requirement.id}${performers.length > 0 ? `，执行结构：${performers.join('、')}` : ''}` : undefined,
+      };
+    }),
+  );
+
   return {
-    schemaVersion: '0.2.0',
+    schemaVersion: '0.3.0',
     projectId: confirmedData.projectId,
     source: 'confirmed-import-data',
     generatedFrom: confirmedData.packageName,
@@ -349,16 +578,39 @@ function buildViewModel(confirmedData: ConfirmedTianwen2Data): GeneratedViewMode
         nodes: bddNodes,
         edges: compositionEdges,
       },
+      {
+        id: 'activity-flow-view',
+        title: '活动图',
+        kind: 'activity',
+        layout: 'auto',
+        layoutEngine: 'deterministic-layered-layout',
+        nodes: activityNodes,
+        edges: activityFlowEdges,
+      },
+      {
+        id: 'traceability-matrix-view',
+        title: '需求追溯矩阵',
+        kind: 'traceability-matrix',
+        layout: 'auto',
+        layoutEngine: 'matrix-layout',
+        nodes: [],
+        edges: [],
+        rows: matrixRows,
+        columns: [...structureColumns, ...behaviorColumns],
+        cells: [...structureCells, ...behaviorCells],
+      },
     ],
     validation: {
       status: 'passed',
-      checkedRules: ['schema', 'missing-reference'],
+      checkedRules: ['schema', 'missing-reference', 'coverage'],
     },
   };
 }
 
 function buildSysmlText(confirmedData: ConfirmedTianwen2Data): string {
   const subsystemByName = new Map(confirmedData.subsystems.map((subsystem) => [subsystem.name, subsystem]));
+  const activities = confirmedData.activities ?? fallbackActivities;
+  const subsystemById = new Map(confirmedData.subsystems.map((subsystem) => [subsystem.id, subsystem]));
   const lines = [
     `package ${confirmedData.packageName} {`,
     '  doc /*',
@@ -384,6 +636,27 @@ function buildSysmlText(confirmedData: ConfirmedTianwen2Data): string {
     if (subsystem.parentId) {
       lines.push(`    doc /* composition parent ${subsystem.parentId}。 */`);
     }
+    lines.push('  }');
+    lines.push('');
+  }
+
+  for (const activity of activities) {
+    lines.push(`  action def ${toSysmlIdentifier(activity.id)} {`);
+    lines.push(`    doc /* ${activity.title}。${activity.text} */`);
+    lines.push(`    doc /* cover ${activity.requirementIds.join('、')}。 */`);
+    if (activity.performedBy.length > 0) {
+      const performers = activity.performedBy
+        .map((subsystemId) => subsystemById.get(subsystemId)?.name ?? subsystemId)
+        .join('、');
+      lines.push(`    doc /* performed by ${performers}。 */`);
+    }
+    lines.push('  }');
+    lines.push('');
+  }
+
+  for (let index = 0; index < activities.length - 1; index += 1) {
+    lines.push(`  item flow ${toSysmlIdentifier(`${activities[index].id}-to-${activities[index + 1].id}`)} {`);
+    lines.push(`    doc /* 活动流：${activities[index].title} -> ${activities[index + 1].title}。 */`);
     lines.push('  }');
     lines.push('');
   }

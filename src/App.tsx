@@ -700,6 +700,8 @@ function AgentDraftReview({
 function GeneratedModelWorkspace({ artifacts }: { artifacts: ModelGenerationResult }) {
   const requirementView = artifacts.viewModel.views.find((view) => view.kind === 'requirements');
   const bddView = artifacts.viewModel.views.find((view) => view.kind === 'bdd');
+  const activityView = artifacts.viewModel.views.find((view) => view.kind === 'activity');
+  const traceabilityMatrixView = artifacts.viewModel.views.find((view) => view.kind === 'traceability-matrix');
 
   return (
     <Space orientation="vertical" size={16} className="generated-workspace">
@@ -711,6 +713,7 @@ function GeneratedModelWorkspace({ artifacts }: { artifacts: ModelGenerationResu
             <Tag color="blue">自动布局</Tag>
             <Tag color={artifacts.validation.valid ? 'success' : 'error'}>Schema 校验通过</Tag>
             <Tag color={artifacts.validation.valid ? 'success' : 'error'}>引用校验通过</Tag>
+            <Tag color={artifacts.validation.findings.length === 0 ? 'success' : 'warning'}>覆盖校验{artifacts.validation.findings.length === 0 ? '通过' : '有缺口'}</Tag>
           </Space>
         }
       >
@@ -747,6 +750,16 @@ function GeneratedModelWorkspace({ artifacts }: { artifacts: ModelGenerationResu
         {bddView ? (
           <Col xs={24} xl={12}>
             <ModelViewCard view={bddView} />
+          </Col>
+        ) : null}
+        {activityView ? (
+          <Col xs={24} xl={12}>
+            <ModelViewCard view={activityView} />
+          </Col>
+        ) : null}
+        {traceabilityMatrixView ? (
+          <Col xs={24}>
+            <TraceabilityMatrixCard view={traceabilityMatrixView} findings={artifacts.validation.findings} />
           </Col>
         ) : null}
       </Row>
@@ -857,6 +870,79 @@ function ModelViewCard({ view }: { view: GeneratedView }) {
           </ReactFlow>
         </div>
       </ReactFlowProvider>
+    </Card>
+  );
+}
+
+function TraceabilityMatrixCard({
+  view,
+  findings,
+}: {
+  view: GeneratedView;
+  findings: ModelGenerationResult['validation']['findings'];
+}) {
+  const rows = view.rows ?? [];
+  const columns = view.columns ?? [];
+  const cells = view.cells ?? [];
+  const cellsByKey = new Map(cells.map((cell) => [`${cell.requirementId}:${cell.columnId}`, cell]));
+  const dataSource = rows.map((row) => ({ key: row.id, ...row }));
+  const tableColumns = [
+    {
+      title: '需求',
+      dataIndex: 'requirementId',
+      key: 'requirement',
+      fixed: 'left' as const,
+      render: (_: unknown, row: (typeof dataSource)[number]) => (
+        <Space orientation="vertical" size={0}>
+          <Text code>{row.requirementId}</Text>
+          <Text>{row.label}</Text>
+        </Space>
+      ),
+    },
+    ...columns.map((column) => ({
+      title: (
+        <Space orientation="vertical" size={0}>
+          <Text>{column.label}</Text>
+          <Tag color={column.kind === 'structure' ? 'green' : 'purple'}>{column.kind === 'structure' ? '结构元素' : '行为元素'}</Tag>
+        </Space>
+      ),
+      dataIndex: column.id,
+      key: column.id,
+      render: (_: unknown, row: (typeof dataSource)[number]) => {
+        const cell = cellsByKey.get(`${row.requirementId}:${column.id}`);
+        const covered = cell?.covered === true;
+        return (
+          <Space orientation="vertical" size={0}>
+            <Tag color={covered ? 'success' : 'warning'}>{covered ? '已覆盖' : '未覆盖'}</Tag>
+            {cell?.evidence ? <Text type="secondary">{cell.evidence}</Text> : null}
+          </Space>
+        );
+      },
+    })),
+  ];
+
+  return (
+    <Card
+      className="workspace-card"
+      title={view.title}
+      extra={<Tag color={findings.length === 0 ? 'success' : 'warning'}>覆盖校验{findings.length === 0 ? '通过' : '有缺口'}</Tag>}
+    >
+      {findings.length > 0 ? (
+        <Alert
+          showIcon
+          type="warning"
+          message="覆盖校验发现未覆盖需求"
+          description={findings.map((finding) => `${finding.requirementId}：${finding.message}`).join('；')}
+        />
+      ) : null}
+      <Table
+        className="traceability-matrix"
+        columns={tableColumns}
+        dataSource={dataSource}
+        pagination={false}
+        scroll={{ x: true }}
+        size="small"
+      />
     </Card>
   );
 }

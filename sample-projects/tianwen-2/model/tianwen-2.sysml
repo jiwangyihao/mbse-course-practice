@@ -47,6 +47,42 @@ package Tianwen2ConfirmedModel {
     doc /* composition parent spacecraft-platform。 */
   }
 
+  action def activity_sample_return {
+    doc /* 近地小行星取样返回。接近目标小行星，执行近距离探测、采样封装与返回准备。 */
+    doc /* cover REQ-TW2-001。 */
+    doc /* performed by 采样返回分系统、制导导航与控制分系统。 */
+  }
+
+  action def activity_cruise_safety {
+    doc /* 深空巡航安全维持。在深空巡航阶段维持姿态、能源和热控安全边界。 */
+    doc /* cover REQ-TW2-002。 */
+    doc /* performed by 航天器平台、电源与热控分系统、制导导航与控制分系统。 */
+  }
+
+  action def activity_telemetry_downlink {
+    doc /* 遥测与科学数据下传。通过测控通信链路完成深空测控、数据下传和遥测接收。 */
+    doc /* cover REQ-TW2-003。 */
+    doc /* performed by 测控通信分系统。 */
+  }
+
+  action def activity_trace_coverage_check {
+    doc /* 模型工件追溯覆盖校验。检查需求到结构和行为视图的覆盖关系，并把缺口暴露为可操作校验结果。 */
+    doc /* cover REQ-TW2-004。 */
+    doc /* performed by 航天器平台、测控通信分系统。 */
+  }
+
+  item flow activity_sample_return_to_activity_cruise_safety {
+    doc /* 活动流：近地小行星取样返回 -> 深空巡航安全维持。 */
+  }
+
+  item flow activity_cruise_safety_to_activity_telemetry_downlink {
+    doc /* 活动流：深空巡航安全维持 -> 遥测与科学数据下传。 */
+  }
+
+  item flow activity_telemetry_downlink_to_activity_trace_coverage_check {
+    doc /* 活动流：遥测与科学数据下传 -> 模型工件追溯覆盖校验。 */
+  }
+
   satisfy REQ_TW2_001_spacecraft_platform {
     subject spacecraft_platform;
     requirement REQ_TW2_001;
@@ -94,4 +130,5 @@ package Tianwen2ConfirmedModel {
     requirement REQ_TW2_004;
     doc /* REQ-TW2-004 追溯到 测控通信分系统，形成满足关系。 */
   }
+
 }
