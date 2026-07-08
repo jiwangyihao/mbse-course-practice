@@ -639,6 +639,188 @@ describe('天问二号确认数据领域模型生成契约', () => {
     expect(invalidConnectionText, '漂移报告必须指出 sourcePort/targetPort 端口字段，而不是只给笼统连接错误').toMatch(/sourcePort|targetPort|端口|port/i);
   });
 
+  it('校验器报告参数约束视图中的参数缺失', () => {
+    const artifacts = generateTianwen2ModelArtifacts(confirmedTianwen2Data);
+    const invalidViewModel = structuredClone(artifacts.viewModel);
+    const parameterView = invalidViewModel.views.find((view) =>
+      /parameter-constraints|参数约束/i.test(`${view.kind} ${view.id} ${view.title}`),
+    );
+
+    expect(
+      parameterView,
+      '测试必须从真实生成的 viewModel.views 找到参数约束视图，而不是臆造独立参数 schema',
+    ).toBeDefined();
+    if (!parameterView) return;
+
+    parameterView.parameters = [];
+
+    const validation = validateViewModel(invalidViewModel) as IssueFiveValidationResult;
+    const findings = [...validation.errors, ...(validation.findings ?? [])];
+    const missingParameterFinding = findings.find((finding) =>
+      finding.code === 'missing-parameter'
+      && /参数缺失|missing.*parameter/i.test(`${finding.message ?? ''} ${finding.path ?? ''} ${finding.code}`)
+      && /parameters|parameterId|参数/i.test(`${finding.path ?? ''} ${finding.message ?? ''}`),
+    );
+
+    expect(validation.valid, '参数约束视图缺少 parameters 时静态校验必须失败').toBe(false);
+    expect(findings.map((finding) => finding.code), '参数缺失必须用 stable code 标识，便于 UI 分类展示').toEqual(
+      expect.arrayContaining(['missing-parameter']),
+    );
+    expect(
+      missingParameterFinding,
+      '参数缺失错误必须通过 message 或 path 指向 parameters / parameterId，便于 UI 定位',
+    ).toBeDefined();
+  });
+
+  it('校验器报告参数约束视图中的单位缺失', () => {
+    const artifacts = generateTianwen2ModelArtifacts(confirmedTianwen2Data);
+    const invalidViewModel = structuredClone(artifacts.viewModel);
+    const parameterView = invalidViewModel.views.find((view) =>
+      /parameter-constraints|参数约束/i.test(`${view.kind} ${view.id} ${view.title}`),
+    );
+
+    expect(
+      parameterView,
+      '测试必须从真实生成的 viewModel.views 找到参数约束视图，而不是臆造独立参数 schema',
+    ).toBeDefined();
+    if (!parameterView) return;
+
+    const firstParameter = parameterView.parameters?.[0] as Record<string, unknown> | undefined;
+    expect(firstParameter, '参数约束视图必须保留至少一个参数，才能只破坏单位声明').toBeDefined();
+    if (!firstParameter) return;
+
+    delete firstParameter.unit;
+    delete firstParameter.unitSymbol;
+    delete firstParameter.unitId;
+
+    const validation = validateViewModel(invalidViewModel) as IssueFiveValidationResult;
+    const errors = validation.errors;
+    const missingUnitFinding = errors.find((finding) =>
+      finding.code === 'missing-unit'
+      && /单位缺失|missing.*unit|unit|parameters/i.test(`${finding.message ?? ''} ${finding.path ?? ''}`),
+    );
+
+    expect(validation.valid, '参数约束视图中的参数缺少单位声明时静态校验必须失败').toBe(false);
+    expect(errors.map((finding) => finding.code), '单位缺失必须用 stable code 标识，便于 UI 分类展示').toEqual(
+      expect.arrayContaining(['missing-unit']),
+    );
+    expect(
+      missingUnitFinding,
+      '单位缺失错误必须通过 message 或 path 指向 unit / parameters，便于 UI 定位',
+    ).toBeDefined();
+  });
+
+  it('校验器报告参数约束视图中的绑定缺失', () => {
+    const artifacts = generateTianwen2ModelArtifacts(confirmedTianwen2Data);
+    const invalidViewModel = structuredClone(artifacts.viewModel);
+    const parameterView = invalidViewModel.views.find((view) =>
+      /parameter-constraints|参数约束/i.test(`${view.kind} ${view.id} ${view.title}`),
+    );
+
+    expect(
+      parameterView,
+      '测试必须从真实生成的 viewModel.views 找到参数约束视图，而不是臆造独立参数 schema',
+    ).toBeDefined();
+    if (!parameterView) return;
+
+    expect(parameterView.constraints?.length, '绑定缺失样例必须保留约束，避免混成参数缺失').toBeGreaterThan(0);
+    expect(parameterView.parameters?.length, '绑定缺失样例必须保留参数，避免混成参数缺失或单位缺失').toBeGreaterThan(0);
+    parameterView.bindings = [];
+
+    const validation = validateViewModel(invalidViewModel) as IssueFiveValidationResult;
+    const errors = validation.errors;
+    const missingBindingFinding = errors.find((finding) =>
+      finding.code === 'missing-binding'
+      && /绑定缺失|missing.*binding|bindings/i.test(`${finding.message ?? ''} ${finding.path ?? ''}`),
+    );
+
+    expect(validation.valid, '参数约束视图中没有约束到参数的绑定时静态校验必须失败').toBe(false);
+    expect(errors.map((finding) => finding.code), '绑定缺失必须用 stable code 标识，便于 UI 分类展示').toEqual(
+      expect.arrayContaining(['missing-binding']),
+    );
+    expect(
+      missingBindingFinding,
+      '绑定缺失错误必须通过 message 或 path 指向 bindings，便于 UI 定位',
+    ).toBeDefined();
+  });
+
+  it('校验器报告单个参数约束未绑定任何参数', () => {
+    const artifacts = generateTianwen2ModelArtifacts(confirmedTianwen2Data);
+    const invalidViewModel = structuredClone(artifacts.viewModel);
+    const parameterView = invalidViewModel.views.find((view) =>
+      /parameter-constraints|参数约束/i.test(`${view.kind} ${view.id} ${view.title}`),
+    );
+
+    expect(
+      parameterView,
+      '测试必须从真实生成的 viewModel.views 找到参数约束视图，而不是臆造独立参数 schema',
+    ).toBeDefined();
+    if (!parameterView) return;
+
+    const unboundConstraint = parameterView.constraints?.[0];
+    expect(unboundConstraint, '绑定覆盖样例必须保留至少一个约束').toBeDefined();
+    if (!unboundConstraint) return;
+
+    parameterView.bindings = (parameterView.bindings ?? []).filter(
+      (binding) => binding.constraintId !== unboundConstraint.id,
+    );
+    expect(parameterView.bindings.length, '坏样例应保留其它绑定，证明校验器不是只检查 bindings 数组非空').toBeGreaterThan(0);
+
+    const validation = validateViewModel(invalidViewModel) as IssueFiveValidationResult;
+    const errors = validation.errors;
+    const missingBindingFinding = errors.find((finding) =>
+      finding.code === 'missing-binding'
+      && /绑定缺失|missing.*binding|bindings/i.test(`${finding.message ?? ''} ${finding.path ?? ''}`)
+      && `${finding.message ?? ''} ${finding.path ?? ''}`.includes(unboundConstraint.id),
+    );
+
+    expect(validation.valid, '某个参数约束没有任何参数绑定时静态校验必须失败').toBe(false);
+    expect(errors.map((finding) => finding.code), '单个约束未绑定必须用 missing-binding 稳定标识').toEqual(
+      expect.arrayContaining(['missing-binding']),
+    );
+    expect(
+      missingBindingFinding,
+      '绑定覆盖错误必须指出未绑定的 constraintId，便于 UI 定位具体缺失绑定的约束',
+    ).toBeDefined();
+  });
+
+  it('校验器报告参数约束视图中的相关模型元素缺失', () => {
+    const artifacts = generateTianwen2ModelArtifacts(confirmedTianwen2Data);
+    const invalidViewModel = structuredClone(artifacts.viewModel);
+    const parameterView = invalidViewModel.views.find((view) =>
+      /parameter-constraints|参数约束/i.test(`${view.kind} ${view.id} ${view.title}`),
+    );
+
+    expect(
+      parameterView,
+      '测试必须从真实生成的 viewModel.views 找到参数约束视图，而不是臆造独立参数 schema',
+    ).toBeDefined();
+    if (!parameterView) return;
+
+    const firstConstraint = parameterView.constraints?.[0] as Record<string, unknown> | undefined;
+    expect(firstConstraint, '相关模型元素缺失样例必须保留至少一个约束').toBeDefined();
+    if (!firstConstraint) return;
+
+    firstConstraint.relatedElementIds = ['missing-related-element'];
+
+    const validation = validateViewModel(invalidViewModel) as IssueFiveValidationResult;
+    const errors = validation.errors;
+    const missingReferenceFinding = errors.find((finding) =>
+      finding.code === 'missing-reference'
+      && /relatedElementIds|missing-related-element|相关模型元素/i.test(`${finding.message ?? ''} ${finding.path ?? ''}`),
+    );
+
+    expect(validation.valid, '参数约束视图中的 relatedElementIds 引用不存在时静态校验必须失败').toBe(false);
+    expect(errors.map((finding) => finding.code), '相关模型元素缺失必须用 missing-reference 稳定标识').toEqual(
+      expect.arrayContaining(['missing-reference']),
+    );
+    expect(
+      missingReferenceFinding,
+      '相关模型元素缺失错误必须通过 message 或 path 指向 relatedElementIds / missing-related-element，便于 UI 定位',
+    ).toBeDefined();
+  });
+
+
   it('校验器报告 schema 错误和缺失引用', () => {
     const invalidViewModel = {
       projectId: 'tianwen-2',

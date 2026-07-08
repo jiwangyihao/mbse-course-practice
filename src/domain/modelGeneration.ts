@@ -39,7 +39,7 @@ export interface ViewPort {
 
 export interface ViewNode {
   id: string;
-  kind: 'mission' | 'requirement' | 'subsystem' | 'system' | 'activity' | 'ibd-part';
+  kind: 'mission' | 'requirement' | 'subsystem' | 'system' | 'activity' | 'ibd-part' | 'constraint' | 'parameter';
   label: string;
   text?: string;
   elementId?: string;
@@ -52,7 +52,7 @@ export interface ViewNode {
 
 export interface ViewEdge {
   id: string;
-  kind: 'hierarchy' | 'trace' | 'composition' | 'flow' | 'connection';
+  kind: 'hierarchy' | 'trace' | 'composition' | 'flow' | 'connection' | 'binding';
   source: string;
   target: string;
   sourcePort?: string;
@@ -91,10 +91,34 @@ export interface TraceabilityMatrixCell {
   evidence?: string;
 }
 
+export interface ParameterConstraint {
+  id: string;
+  label: string;
+  expression: string;
+  relatedElementIds: string[];
+}
+
+export interface ConstraintParameter {
+  id: string;
+  label: string;
+  unit: string;
+  unitSymbol: string;
+  relatedElementIds: string[];
+}
+
+export interface ParameterBinding {
+  id: string;
+  kind: 'binding';
+  constraintId: string;
+  parameterId: string;
+  label: string;
+  relatedElementIds: string[];
+}
+
 export interface GeneratedView {
   id: string;
   title: string;
-  kind: 'requirements' | 'bdd' | 'activity' | 'traceability-matrix' | 'ibd';
+  kind: 'requirements' | 'bdd' | 'activity' | 'traceability-matrix' | 'ibd' | 'parameter-constraints';
   layout: 'auto';
   layoutEngine: 'deterministic-layered-layout' | 'matrix-layout' | 'elk-layered';
   nodes: ViewNode[];
@@ -104,6 +128,9 @@ export interface GeneratedView {
   rows?: TraceabilityMatrixRow[];
   columns?: TraceabilityMatrixColumn[];
   cells?: TraceabilityMatrixCell[];
+  constraints?: ParameterConstraint[];
+  parameters?: ConstraintParameter[];
+  bindings?: ParameterBinding[];
 }
 
 export interface GeneratedViewModel {
@@ -125,7 +152,7 @@ export interface ModelGenerationResult {
 }
 
 export interface ViewModelValidationError {
-  code: 'schema' | 'missing-reference' | 'missing-endpoint' | 'invalid-connection';
+  code: 'schema' | 'missing-reference' | 'missing-endpoint' | 'invalid-connection' | 'missing-parameter' | 'missing-unit' | 'missing-binding';
   message: string;
   path: string;
 }
@@ -274,6 +301,7 @@ export function generateTianwen2ModelArtifacts(
 export function validateViewModel(candidate: unknown): ViewModelValidationResult {
   const errors: ViewModelValidationError[] = [];
   const findings: ViewModelValidationFinding[] = [];
+
   const matrixViews: Array<{
     id: string;
     rows: Array<{ id: string; requirementId: string; path: string }>;
@@ -300,6 +328,26 @@ export function validateViewModel(candidate: unknown): ViewModelValidationResult
     errors.push({ code: 'schema', message: 'schema 缺少必需数组 views。', path: '$.views' });
     return { valid: false, errors, findings };
   }
+  const globalElementIds = new Set<string>();
+  candidate.views.forEach((view) => {
+    if (!isRecord(view) || !Array.isArray(view.nodes)) {
+      return;
+    }
+    view.nodes.forEach((node) => {
+      if (!isRecord(node)) {
+        return;
+      }
+      const id = typeof node.id === 'string' ? node.id : '';
+      const elementId = typeof node.elementId === 'string' ? node.elementId : '';
+      if (id.trim() !== '') {
+        globalElementIds.add(id);
+      }
+      if (elementId.trim() !== '') {
+        globalElementIds.add(elementId);
+      }
+    });
+  });
+
 
   candidate.views.forEach((view, viewIndex) => {
     if (!isRecord(view)) {
@@ -356,6 +404,10 @@ export function validateViewModel(candidate: unknown): ViewModelValidationResult
 
     if (view.kind === 'ibd') {
       validateIbdView(view, viewPath, nodeIds, errors);
+    }
+
+    if (view.kind === 'parameter-constraints') {
+      validateParameterConstraintView(view, viewPath, errors, globalElementIds);
     }
 
     if (view.kind !== 'traceability-matrix') {
@@ -602,6 +654,138 @@ function validateIbdView(
   }
 }
 
+function validateParameterConstraintView(
+  view: Record<string, unknown>,
+  viewPath: string,
+  errors: ViewModelValidationError[],
+  globalElementIds: Set<string>,
+) {
+  const readString = (record: Record<string, unknown>, keys: string[]) => {
+    for (const key of keys) {
+      const value = record[key];
+      if (typeof value === 'string' && value.trim() !== '') {
+        return value;
+      }
+    }
+    return '';
+  };
+  const validateRelatedElementIds = (record: Record<string, unknown>, path: string) => {
+    const relatedElementIds = record.relatedElementIds;
+    if (relatedElementIds === undefined) {
+      return;
+    }
+    if (!Array.isArray(relatedElementIds)) {
+      errors.push({ code: 'schema', message: '参数约束相关模型元素 relatedElementIds 必须是数组。', path: `${path}.relatedElementIds` });
+      return;
+    }
+    relatedElementIds.forEach((elementId, elementIndex) => {
+      if (typeof elementId !== 'string' || elementId.trim() === '') {
+        errors.push({ code: 'schema', message: '参数约束相关模型元素 id 必须是非空字符串。', path: `${path}.relatedElementIds[${elementIndex}]` });
+        return;
+      }
+      if (!globalElementIds.has(elementId)) {
+        errors.push({ code: 'missing-reference', message: `参数约束相关模型元素引用不存在：${elementId}。`, path: `${path}.relatedElementIds[${elementIndex}]` });
+      }
+    });
+  };
+
+
+  if (!Array.isArray(view.constraints)) {
+    errors.push({ code: 'schema', message: '参数约束视图缺少 constraints 数组。', path: `${viewPath}.constraints` });
+    return;
+  }
+  if (!Array.isArray(view.parameters)) {
+    errors.push({ code: 'missing-parameter', message: '参数约束视图参数缺失：缺少 parameters 数组。', path: `${viewPath}.parameters` });
+    return;
+  }
+  if (!Array.isArray(view.bindings)) {
+    errors.push({ code: 'missing-binding', message: '参数约束视图绑定缺失：缺少 bindings 数组。', path: `${viewPath}.bindings` });
+    return;
+  }
+
+  const constraintIds = new Set<string>();
+  view.constraints.forEach((constraint, constraintIndex) => {
+    const path = `${viewPath}.constraints[${constraintIndex}]`;
+    if (!isRecord(constraint)) {
+      errors.push({ code: 'schema', message: '参数约束必须是对象。', path });
+      return;
+    }
+
+    const constraintId = readString(constraint, ['id', 'constraintId']);
+    if (constraintId === '') {
+      errors.push({ code: 'schema', message: '参数约束缺少稳定 id。', path: `${path}.id` });
+      return;
+    }
+    constraintIds.add(constraintId);
+    validateRelatedElementIds(constraint, path);
+  });
+
+  const parameterIds = new Set<string>();
+  view.parameters.forEach((parameter, parameterIndex) => {
+    const path = `${viewPath}.parameters[${parameterIndex}]`;
+    if (!isRecord(parameter)) {
+      errors.push({ code: 'schema', message: '参数必须是对象。', path });
+      return;
+    }
+
+    const parameterId = readString(parameter, ['id', 'parameterId']);
+    if (parameterId === '') {
+      errors.push({ code: 'missing-parameter', message: '参数约束视图参数缺失：参数缺少稳定 id。', path: `${path}.id` });
+      return;
+    }
+    parameterIds.add(parameterId);
+
+    if (readString(parameter, ['unit', 'unitSymbol', 'unitId']) === '') {
+      errors.push({ code: 'missing-unit', message: `参数 ${parameterId} 单位缺失。`, path: `${path}.unit` });
+    }
+    validateRelatedElementIds(parameter, path);
+  });
+
+  if (view.parameters.length === 0) {
+    errors.push({ code: 'missing-parameter', message: '参数约束视图参数缺失：至少需要一个参数。', path: `${viewPath}.parameters` });
+  }
+  if (view.bindings.length === 0) {
+    errors.push({ code: 'missing-binding', message: '参数约束视图绑定缺失：至少需要一个约束到参数的绑定。', path: `${viewPath}.bindings` });
+  }
+
+  const boundConstraintIds = new Set<string>();
+
+  view.bindings.forEach((binding, bindingIndex) => {
+    const path = `${viewPath}.bindings[${bindingIndex}]`;
+    if (!isRecord(binding)) {
+      errors.push({ code: 'schema', message: '参数绑定必须是对象。', path });
+      return;
+    }
+
+    const constraintId = readString(binding, ['constraintId', 'source']);
+    const parameterId = readString(binding, ['parameterId', 'target']);
+    if (constraintId === '' || !constraintIds.has(constraintId)) {
+      errors.push({ code: 'missing-reference', message: `参数绑定引用不存在的约束：${constraintId}。`, path: `${path}.constraintId` });
+    }
+    if (constraintId !== '' && constraintIds.has(constraintId)) {
+      boundConstraintIds.add(constraintId);
+    }
+    if (parameterId === '' || !parameterIds.has(parameterId)) {
+      errors.push({ code: 'missing-parameter', message: `参数绑定参数缺失：${parameterId} 未在 parameters 中声明。`, path: `${path}.parameterId` });
+    }
+    validateRelatedElementIds(binding, path);
+  });
+
+  view.constraints.forEach((constraint, constraintIndex) => {
+    if (!isRecord(constraint)) {
+      return;
+    }
+    const constraintId = readString(constraint, ['id', 'constraintId']);
+    if (constraintId !== '' && !boundConstraintIds.has(constraintId)) {
+      errors.push({
+        code: 'missing-binding',
+        message: `参数约束 ${constraintId} 绑定缺失：未绑定任何参数。`,
+        path: `${viewPath}.constraints[${constraintIndex}]`,
+      });
+    }
+  });
+}
+
 function buildViewModel(confirmedData: ConfirmedTianwen2Data): GeneratedViewModel {
   const subsystemByName = new Map(confirmedData.subsystems.map((subsystem) => [subsystem.name, subsystem]));
   const activities = confirmedData.activities ?? fallbackActivities;
@@ -751,6 +935,8 @@ function buildViewModel(confirmedData: ConfirmedTianwen2Data): GeneratedViewMode
     }),
   );
 
+  const parameterConstraintView = buildParameterConstraintView(confirmedData.subsystems);
+
   return {
     schemaVersion: '0.4.0',
     projectId: confirmedData.projectId,
@@ -799,6 +985,7 @@ function buildViewModel(confirmedData: ConfirmedTianwen2Data): GeneratedViewMode
         nodes: activityNodes,
         edges: activityFlowEdges,
       },
+      parameterConstraintView,
       {
         id: 'traceability-matrix-view',
         title: '需求追溯矩阵',
@@ -814,8 +1001,102 @@ function buildViewModel(confirmedData: ConfirmedTianwen2Data): GeneratedViewMode
     ],
     validation: {
       status: 'passed',
-      checkedRules: ['schema', 'missing-reference', 'coverage', 'port-reference', 'connection-endpoint', 'interface-compatibility'],
+      checkedRules: ['schema', 'missing-reference', 'coverage', 'port-reference', 'connection-endpoint', 'interface-compatibility', 'parameter-completeness', 'unit-completeness', 'binding-completeness'],
     },
+  };
+}
+
+function buildParameterConstraintView(subsystems: ConfirmedSubsystem[]): GeneratedView {
+  const findSubsystem = (patterns: RegExp[]) =>
+    subsystems.find((subsystem) => patterns.some((pattern) => pattern.test(`${subsystem.id} ${subsystem.name}`))) ?? subsystems[0];
+  const spacecraft = findSubsystem([/spacecraft-platform|航天器平台/i]);
+  const sampling = findSubsystem([/sampling-return|采样|取样/i]);
+  const powerThermal = findSubsystem([/power-thermal|电源|热控/i]);
+  const massRelatedElementIds = [spacecraft?.id, sampling?.id].filter((id): id is string => Boolean(id));
+  const powerRelatedElementIds = [powerThermal?.id, spacecraft?.id].filter((id): id is string => Boolean(id));
+  const constraints: ParameterConstraint[] = [
+    {
+      id: 'constraint-mass-budget',
+      label: '质量预算约束',
+      expression: 'spacecraft-dry-mass <= 1000 kg',
+      relatedElementIds: massRelatedElementIds,
+    },
+    {
+      id: 'constraint-power-budget',
+      label: '电源输出约束',
+      expression: 'solar-array-output >= 2000 W',
+      relatedElementIds: powerRelatedElementIds,
+    },
+  ];
+  const parameters: ConstraintParameter[] = [
+    {
+      id: 'spacecraft-dry-mass',
+      label: '探测器干质量',
+      unit: 'kg',
+      unitSymbol: 'kg',
+      relatedElementIds: massRelatedElementIds,
+    },
+    {
+      id: 'solar-array-output',
+      label: '太阳翼输出功率',
+      unit: 'W',
+      unitSymbol: 'W',
+      relatedElementIds: powerRelatedElementIds,
+    },
+  ];
+  const bindings: ParameterBinding[] = [
+    {
+      id: 'binding-mass-budget-dry-mass',
+      kind: 'binding',
+      constraintId: 'constraint-mass-budget',
+      parameterId: 'spacecraft-dry-mass',
+      label: '质量参数绑定',
+      relatedElementIds: massRelatedElementIds,
+    },
+    {
+      id: 'binding-power-budget-solar-array-output',
+      kind: 'binding',
+      constraintId: 'constraint-power-budget',
+      parameterId: 'solar-array-output',
+      label: '功率参数绑定',
+      relatedElementIds: powerRelatedElementIds,
+    },
+  ];
+  const constraintNodes: ViewNode[] = constraints.map((constraint, index) => ({
+    id: constraint.id,
+    kind: 'constraint',
+    label: constraint.label,
+    text: constraint.expression,
+    elementId: constraint.id,
+    position: { x: 80, y: 80 + index * 160 },
+  }));
+  const parameterNodes: ViewNode[] = parameters.map((parameter, index) => ({
+    id: parameter.id,
+    kind: 'parameter',
+    label: parameter.label,
+    text: `单位：${parameter.unit}`,
+    elementId: parameter.id,
+    position: { x: 420, y: 80 + index * 160 },
+  }));
+  const bindingEdges: ViewEdge[] = bindings.map((binding) => ({
+    id: binding.id,
+    kind: 'binding',
+    source: binding.constraintId,
+    target: binding.parameterId,
+    label: binding.label,
+  }));
+
+  return {
+    id: 'parameter-constraints-view',
+    title: '参数约束视图',
+    kind: 'parameter-constraints',
+    layout: 'auto',
+    layoutEngine: 'deterministic-layered-layout',
+    nodes: [...constraintNodes, ...parameterNodes],
+    edges: bindingEdges,
+    constraints,
+    parameters,
+    bindings,
   };
 }
 

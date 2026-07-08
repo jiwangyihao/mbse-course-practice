@@ -4,7 +4,7 @@ import process from 'node:process';
 import React from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { vi } from 'vitest';
-import { extractTianwen2ConfirmedData, generateTianwen2ModelArtifacts } from '../src/domain/modelGeneration';
+import { extractTianwen2ConfirmedData, generateTianwen2ModelArtifacts, validateViewModel } from '../src/domain/modelGeneration';
 import App from '../src/App';
 
 const tauriInvokeMock = vi.hoisted(() => vi.fn());
@@ -135,6 +135,48 @@ function expectVisibleText(pattern: RegExp, label: string) {
   expect(screen.queryAllByText(pattern).length, `${label} 应在工作台入口中可见`).toBeGreaterThan(
     0,
   );
+}
+
+type ParameterConstraintRecord = Record<string, unknown>;
+
+type ParameterConstraintView = {
+  id?: string;
+  title?: string;
+  kind?: string;
+  nodes?: ParameterConstraintRecord[];
+  edges?: ParameterConstraintRecord[];
+  connections?: ParameterConstraintRecord[];
+  constraints?: ParameterConstraintRecord[];
+  parameters?: ParameterConstraintRecord[];
+  bindings?: ParameterConstraintRecord[];
+};
+
+function recordArray(value: unknown) {
+  return Array.isArray(value)
+    ? value.filter((item): item is ParameterConstraintRecord => item !== null && typeof item === 'object' && !Array.isArray(item))
+    : [];
+}
+
+function recordText(record: ParameterConstraintRecord) {
+  return Object.values(record)
+    .flatMap((value) => {
+      if (typeof value === 'string') return [value];
+      if (Array.isArray(value)) return value.filter((item): item is string => typeof item === 'string');
+      return [];
+    })
+    .join(' ');
+}
+
+function displayName(record: ParameterConstraintRecord, fallback: string) {
+  for (const key of ['label', 'name', 'title', 'id']) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim() !== '') return value;
+  }
+  return fallback;
+}
+
+function regexpForLiteral(value: string) {
+  return new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
 }
 
 describe('天问二号样例项目端到端契约', () => {
@@ -472,4 +514,104 @@ describe('天问二号样例项目端到端契约', () => {
     expect(appEntry, 'IBD 所在 React Flow 画布必须关闭用户连线，避免伪装成完整图编辑器').toMatch(/nodesConnectable\s*=\s*\{false\}|nodesConnectable\s*:\s*false/);
   });
 
+
+  it('issue #7 tracer：参数约束视图沿 JSON 视图模型、校验器和工作区渲染链路消费', async () => {
+    const sourceMaterial = [
+      '天问二号任务面向小行星取样返回和主带彗星探测。',
+      'REQ-TW2-001：任务应支持对目标小行星开展近距离探测并完成取样返回。',
+      'REQ-TW2-003：电源与热控分系统应在深空飞行和近距离探测阶段提供能源与热环境保障。',
+      'REQ-TW2-004：探测器应通过测控通信分系统完成深空测控、数据下传和遥测接收。',
+      '参数约束视图：探测器干质量不超过 1000 kg，电源输出功率不低于 2000 W。',
+      '约束 mass-budget 绑定参数 spacecraft-dry-mass，相关模型元素为航天器平台和采样返回分系统。',
+      '约束 power-budget 绑定参数 solar-array-output，相关模型元素为电源与热控分系统。',
+      '航天器平台应为采样返回、测控通信、电源与热控、制导导航与控制分系统提供统一承载。',
+    ].join('\n');
+    const confirmedData = extractTianwen2ConfirmedData(sourceMaterial);
+    const draft = generateTianwen2ModelArtifacts(confirmedData);
+    const views = draft.viewModel.views as unknown as ParameterConstraintView[];
+    const parameterView = views.find((view) =>
+      /parameter.*constraint|constraint.*parameter|参数约束/i.test(`${view.kind ?? ''} ${view.id ?? ''} ${view.title ?? ''}`),
+    );
+
+    expect(
+      parameterView,
+      'issue #7 要求参数约束视图作为 viewModel.views 中的公开视图生成，而不是另起一套脱离 #3 JSON 视图模型的 schema',
+    ).toBeDefined();
+    if (!parameterView) return;
+
+    const constraints = recordArray(parameterView.constraints).length > 0
+      ? recordArray(parameterView.constraints)
+      : recordArray(parameterView.nodes).filter((node) => /constraint|约束/i.test(recordText(node)));
+    const parameters = recordArray(parameterView.parameters).length > 0
+      ? recordArray(parameterView.parameters)
+      : recordArray(parameterView.nodes).filter((node) => /parameter|param|参数/i.test(recordText(node)));
+    const bindings = recordArray(parameterView.bindings).length > 0
+      ? recordArray(parameterView.bindings)
+      : [...recordArray(parameterView.edges), ...recordArray(parameterView.connections)].filter((edge) => /binding|bind|绑定/i.test(recordText(edge)));
+    const parameterWithUnit = parameters.find((parameter) =>
+      ['unit', 'unitSymbol', 'unitId'].some((key) => typeof parameter[key] === 'string' && String(parameter[key]).trim() !== ''),
+    );
+    const recordWithRelatedElements = [...constraints, ...parameters, ...bindings].find((record) =>
+      Array.isArray(record.relatedElementIds) || Array.isArray(record.relatedElements) || typeof record.elementId === 'string',
+    );
+
+    expect(constraints.length, '参数约束视图必须表达约束，不能只给一个空视图入口').toBeGreaterThan(0);
+    expect(parameters.length, '参数约束视图必须表达参数，供约束绑定引用').toBeGreaterThan(0);
+    expect(bindings.length, '参数约束视图必须表达约束与参数之间的绑定关系').toBeGreaterThan(0);
+    expect(parameterWithUnit, '参数必须携带单位字段，避免 UI 只能从标签文案猜测 kg/W 等单位').toBeDefined();
+    expect(recordWithRelatedElements, '约束、参数或绑定必须暴露 relatedElementIds/relatedElements/elementId，供用户追溯相关模型元素').toBeDefined();
+
+    const validation = validateViewModel(draft.viewModel);
+    expect(validation.valid, '包含参数约束视图的完整生成结果应能被确定性 validateViewModel seam 消费并通过校验').toBe(true);
+    expect(validation.errors, '参数约束视图不应导致既有 JSON 视图模型 schema 或引用校验报错').toEqual([]);
+
+    tauriInvokeMock.mockImplementation(async (command: string) => {
+      if (command === 'start_agent_sidecar') return { state: 'running', pid: 4242, endpoint: 'local://agent-sidecar/parameter-tracer' };
+      if (command === 'extract_agent_candidates') {
+        return {
+          sessionId: 'parameter-extraction-session',
+          events: [{ type: 'extraction', message: '已抽取包含参数约束的确认候选项。', confirmedData }],
+        };
+      }
+      if (command === 'generate_agent_model_draft') {
+        return {
+          sessionId: 'parameter-draft-session',
+          events: [{ type: 'model-draft', message: '模型草案已通过参数约束静态校验。', draft }],
+        };
+      }
+      throw new Error(`未预期的 Tauri 命令：${command}`);
+    });
+
+    render(React.createElement(App));
+    fireEvent.click(screen.getByRole('button', { name: /新建项目 \/ 导入材料（#3）/ }));
+    fireEvent.change(screen.getByRole('textbox', { name: /源材料|材料内容|粘贴/ }), {
+      target: { value: sourceMaterial },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /抽取候选|生成候选|开始抽取/ }));
+    expect(await screen.findByText(/候选使命/)).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: /确认 Agent 输出并生成模型草案/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /^确认 Agent 输出$/ }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: /材料导入与确认向导/ })).not.toBeInTheDocument();
+    });
+
+    expect(screen.getByText(/确认生成的模型工件/), '确认后应进入生成模型工作区，参数约束断言必须来自用户可见工作区').toBeVisible();
+    const workspace = screen;
+    const parameterViewTitle = parameterView.title ?? '参数约束视图';
+    const constraintName = displayName(constraints[0], '参数约束');
+    const parameterName = displayName(parameters[0], '参数');
+    const unit = String(parameterWithUnit?.unit ?? parameterWithUnit?.unitSymbol ?? parameterWithUnit?.unitId ?? 'kg');
+    const bindingName = displayName(bindings[0], '绑定');
+
+    expect(workspace.getByText(regexpForLiteral(parameterViewTitle)), '工作区必须展示参数约束视图卡片标题').toBeVisible();
+    expect(workspace.getByText(regexpForLiteral(constraintName)), '参数约束视图必须把约束名称渲染给用户').toBeVisible();
+    expect(workspace.getByText(regexpForLiteral(parameterName)), '参数约束视图必须把参数名称渲染给用户').toBeVisible();
+    expect(workspace.getAllByText(regexpForLiteral(unit)).length, '参数约束视图必须把参数单位渲染给用户').toBeGreaterThan(0);
+    expect(workspace.getAllByText(regexpForLiteral(bindingName)).length, '参数约束视图必须把绑定关系渲染给用户').toBeGreaterThan(0);
+    expect(
+      workspace.getByText(/不执行仿真、求解或 Modelica 联合仿真|不执行.*仿真.*求解.*Modelica/),
+      '界面必须明确参数约束视图只读展示与静态校验边界，不执行仿真、求解或 Modelica 联合仿真',
+    ).toBeVisible();
+  });
 });

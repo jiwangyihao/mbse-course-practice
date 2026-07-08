@@ -286,56 +286,56 @@
           "id": "spacecraft-platform",
           "kind": "ibd-part",
           "label": "航天器平台",
-          "text": "IBD 边界部件，承载内部连接。",
           "elementId": "spacecraft-platform",
           "position": {
             "x": 320,
             "y": 40
-          }
+          },
+          "text": "IBD 边界部件，承载内部连接。"
         },
         {
           "id": "sampling-return",
           "kind": "ibd-part",
           "label": "采样返回分系统",
-          "text": "IBD 内部部件，端口参与连接校验。",
           "elementId": "sampling-return",
           "position": {
             "x": 80,
             "y": 220
-          }
+          },
+          "text": "IBD 内部部件，端口参与连接校验。"
         },
         {
           "id": "ttc-communication",
           "kind": "ibd-part",
           "label": "测控通信分系统",
-          "text": "IBD 内部部件，端口参与连接校验。",
           "elementId": "ttc-communication",
           "position": {
             "x": 310,
             "y": 220
-          }
+          },
+          "text": "IBD 内部部件，端口参与连接校验。"
         },
         {
           "id": "power-thermal",
           "kind": "ibd-part",
           "label": "电源与热控分系统",
-          "text": "IBD 内部部件，端口参与连接校验。",
           "elementId": "power-thermal",
           "position": {
             "x": 540,
             "y": 220
-          }
+          },
+          "text": "IBD 内部部件，端口参与连接校验。"
         },
         {
           "id": "gnc",
           "kind": "ibd-part",
           "label": "制导导航与控制分系统",
-          "text": "IBD 内部部件，端口参与连接校验。",
           "elementId": "gnc",
           "position": {
             "x": 770,
             "y": 220
-          }
+          },
+          "text": "IBD 内部部件，端口参与连接校验。"
         }
       ],
       "edges": [
@@ -560,6 +560,141 @@
           "source": "activity-telemetry-downlink",
           "target": "activity-trace-coverage-check",
           "label": "活动流"
+        }
+      ]
+    },
+    {
+      "id": "parameter-constraints-view",
+      "title": "参数约束视图",
+      "kind": "parameter-constraints",
+      "layout": "auto",
+      "layoutEngine": "deterministic-layered-layout",
+      "nodes": [
+        {
+          "id": "constraint-mass-budget",
+          "kind": "constraint",
+          "label": "质量预算约束",
+          "text": "spacecraft-dry-mass <= 1000 kg",
+          "elementId": "constraint-mass-budget",
+          "position": {
+            "x": 80,
+            "y": 80
+          }
+        },
+        {
+          "id": "constraint-power-budget",
+          "kind": "constraint",
+          "label": "电源输出约束",
+          "text": "solar-array-output >= 2000 W",
+          "elementId": "constraint-power-budget",
+          "position": {
+            "x": 80,
+            "y": 240
+          }
+        },
+        {
+          "id": "spacecraft-dry-mass",
+          "kind": "parameter",
+          "label": "探测器干质量",
+          "text": "单位：kg",
+          "elementId": "spacecraft-dry-mass",
+          "position": {
+            "x": 420,
+            "y": 80
+          }
+        },
+        {
+          "id": "solar-array-output",
+          "kind": "parameter",
+          "label": "太阳翼输出功率",
+          "text": "单位：W",
+          "elementId": "solar-array-output",
+          "position": {
+            "x": 420,
+            "y": 240
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "binding-mass-budget-dry-mass",
+          "kind": "binding",
+          "source": "constraint-mass-budget",
+          "target": "spacecraft-dry-mass",
+          "label": "质量参数绑定"
+        },
+        {
+          "id": "binding-power-budget-solar-array-output",
+          "kind": "binding",
+          "source": "constraint-power-budget",
+          "target": "solar-array-output",
+          "label": "功率参数绑定"
+        }
+      ],
+      "constraints": [
+        {
+          "id": "constraint-mass-budget",
+          "label": "质量预算约束",
+          "expression": "spacecraft-dry-mass <= 1000 kg",
+          "relatedElementIds": [
+            "spacecraft-platform",
+            "sampling-return"
+          ]
+        },
+        {
+          "id": "constraint-power-budget",
+          "label": "电源输出约束",
+          "expression": "solar-array-output >= 2000 W",
+          "relatedElementIds": [
+            "power-thermal",
+            "spacecraft-platform"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "id": "spacecraft-dry-mass",
+          "label": "探测器干质量",
+          "unit": "kg",
+          "unitSymbol": "kg",
+          "relatedElementIds": [
+            "spacecraft-platform",
+            "sampling-return"
+          ]
+        },
+        {
+          "id": "solar-array-output",
+          "label": "太阳翼输出功率",
+          "unit": "W",
+          "unitSymbol": "W",
+          "relatedElementIds": [
+            "power-thermal",
+            "spacecraft-platform"
+          ]
+        }
+      ],
+      "bindings": [
+        {
+          "id": "binding-mass-budget-dry-mass",
+          "kind": "binding",
+          "constraintId": "constraint-mass-budget",
+          "parameterId": "spacecraft-dry-mass",
+          "label": "质量参数绑定",
+          "relatedElementIds": [
+            "spacecraft-platform",
+            "sampling-return"
+          ]
+        },
+        {
+          "id": "binding-power-budget-solar-array-output",
+          "kind": "binding",
+          "constraintId": "constraint-power-budget",
+          "parameterId": "solar-array-output",
+          "label": "功率参数绑定",
+          "relatedElementIds": [
+            "power-thermal",
+            "spacecraft-platform"
+          ]
         }
       ]
     },
@@ -889,7 +1024,10 @@
       "coverage",
       "port-reference",
       "connection-endpoint",
-      "interface-compatibility"
+      "interface-compatibility",
+      "parameter-completeness",
+      "unit-completeness",
+      "binding-completeness"
     ]
   }
 }

@@ -365,6 +365,7 @@ select {
   font-size: 11px;
 }
 
-.ibd-boundary-alert {
+.ibd-boundary-alert,
+.parameter-boundary-alert {
   margin-bottom: 12px;
 }

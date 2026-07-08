@@ -706,6 +706,7 @@ function GeneratedModelWorkspace({ artifacts }: { artifacts: ModelGenerationResu
   const ibdView = artifacts.viewModel.views.find((view) => view.kind === 'ibd');
   const activityView = artifacts.viewModel.views.find((view) => view.kind === 'activity');
   const traceabilityMatrixView = artifacts.viewModel.views.find((view) => view.kind === 'traceability-matrix');
+  const parameterConstraintsView = artifacts.viewModel.views.find((view) => view.kind === 'parameter-constraints');
 
   return (
     <Space orientation="vertical" size={16} className="generated-workspace">
@@ -764,6 +765,11 @@ function GeneratedModelWorkspace({ artifacts }: { artifacts: ModelGenerationResu
         {activityView ? (
           <Col xs={24} xl={12}>
             <ModelViewCard view={activityView} />
+          </Col>
+        ) : null}
+        {parameterConstraintsView ? (
+          <Col xs={24}>
+            <ParameterConstraintCard view={parameterConstraintsView} />
           </Col>
         ) : null}
         {traceabilityMatrixView ? (
@@ -948,6 +954,125 @@ function formatDiagramEdgeLabel(edge: GeneratedView['edges'][number] | NonNullab
 
   return edge.label ?? edge.kind;
  }
+
+function ParameterConstraintCard({ view }: { view: GeneratedView }) {
+  const constraints = view.constraints ?? [];
+  const parameters = view.parameters ?? [];
+  const bindings = view.bindings ?? [];
+  const formatRelatedElements = (relatedElementIds: string[]) => (relatedElementIds.length > 0 ? relatedElementIds.join('、') : '未声明');
+
+  return (
+    <Card className="workspace-card" title={view.title} extra={<Tag color="blue">只读静态校验</Tag>}>
+      <Alert
+        title="只读展示与静态校验"
+        showIcon
+        type="info"
+        className="parameter-boundary-alert"
+        description="展示约束、参数绑定、单位和相关模型元素；不执行仿真、求解或 Modelica 联合仿真。"
+      />
+      <Row gutter={[12, 12]}>
+        <Col xs={24} lg={12}>
+          <Card size="small" title="约束">
+            <Table
+              size="small"
+              pagination={false}
+              dataSource={constraints.map((constraint) => ({ key: constraint.id, ...constraint }))}
+              columns={[
+                {
+                  title: '约束',
+                  dataIndex: 'label',
+                  key: 'label',
+                  render: (_: unknown, constraint: (typeof constraints)[number]) => (
+                    <Space orientation="vertical" size={0}>
+                      <Text strong>{constraint.label}</Text>
+                      <Text code>{constraint.id}</Text>
+                    </Space>
+                  ),
+                },
+                { title: '表达式', dataIndex: 'expression', key: 'expression' },
+                {
+                  title: '相关模型元素',
+                  dataIndex: 'relatedElementIds',
+                  key: 'relatedElementIds',
+                  render: (relatedElementIds: string[]) => <Text>{formatRelatedElements(relatedElementIds)}</Text>,
+                },
+              ]}
+            />
+          </Card>
+        </Col>
+        <Col xs={24} lg={12}>
+          <Card size="small" title="参数与单位">
+            <Table
+              size="small"
+              pagination={false}
+              dataSource={parameters.map((parameter) => ({ key: parameter.id, ...parameter }))}
+              columns={[
+                {
+                  title: '参数',
+                  dataIndex: 'label',
+                  key: 'label',
+                  render: (_: unknown, parameter: (typeof parameters)[number]) => (
+                    <Space orientation="vertical" size={0}>
+                      <Text strong>{parameter.label}</Text>
+                      <Text code>{parameter.id}</Text>
+                    </Space>
+                  ),
+                },
+                { title: '单位', dataIndex: 'unit', key: 'unit', render: (unit: string) => <Text code>{unit}</Text> },
+                {
+                  title: '相关模型元素',
+                  dataIndex: 'relatedElementIds',
+                  key: 'relatedElementIds',
+                  render: (relatedElementIds: string[]) => <Text>{formatRelatedElements(relatedElementIds)}</Text>,
+                },
+              ]}
+            />
+          </Card>
+        </Col>
+        <Col xs={24}>
+          <Card size="small" title="参数绑定">
+            <Table
+              size="small"
+              pagination={false}
+              dataSource={bindings.map((binding) => ({ key: binding.id, ...binding }))}
+              columns={[
+                {
+                  title: '绑定',
+                  dataIndex: 'label',
+                  key: 'label',
+                  render: (_: unknown, binding: (typeof bindings)[number]) => (
+                    <Space orientation="vertical" size={0}>
+                      <Text strong>{binding.label}</Text>
+                      <Text code>{binding.id}</Text>
+                    </Space>
+                  ),
+                },
+                {
+                  title: '约束',
+                  dataIndex: 'constraintId',
+                  key: 'constraintId',
+                  render: (constraintId: string) => <Text code>{constraintId}</Text>,
+                },
+                {
+                  title: '参数',
+                  dataIndex: 'parameterId',
+                  key: 'parameterId',
+                  render: (parameterId: string) => <Text code>{parameterId}</Text>,
+                },
+                {
+                  title: '相关模型元素',
+                  dataIndex: 'relatedElementIds',
+                  key: 'relatedElementIds',
+                  render: (relatedElementIds: string[]) => <Text>{formatRelatedElements(relatedElementIds)}</Text>,
+                },
+              ]}
+            />
+          </Card>
+        </Col>
+      </Row>
+    </Card>
+  );
+}
 
 function TraceabilityMatrixCard({
   view,
