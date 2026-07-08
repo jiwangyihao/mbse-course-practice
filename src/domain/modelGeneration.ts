@@ -29,12 +29,21 @@ export interface ConfirmedTianwen2Data {
   activities?: ConfirmedActivity[];
 }
 
+export interface ViewPort {
+  id: string;
+  label: string;
+  kind: 'sample' | 'data' | 'power' | 'thermal' | 'control';
+  ownerId: string;
+  interfaceId: string;
+}
+
 export interface ViewNode {
   id: string;
-  kind: 'mission' | 'requirement' | 'subsystem' | 'system' | 'activity';
+  kind: 'mission' | 'requirement' | 'subsystem' | 'system' | 'activity' | 'ibd-part';
   label: string;
   text?: string;
   elementId?: string;
+  ports?: ViewPort[];
   position: {
     x: number;
     y: number;
@@ -43,10 +52,22 @@ export interface ViewNode {
 
 export interface ViewEdge {
   id: string;
-  kind: 'hierarchy' | 'trace' | 'composition' | 'flow';
+  kind: 'hierarchy' | 'trace' | 'composition' | 'flow' | 'connection';
   source: string;
   target: string;
+  sourcePort?: string;
+  targetPort?: string;
   label?: string;
+}
+
+export interface ViewConnection {
+  id: string;
+  kind: 'connection' | 'connector';
+  source: string;
+  target: string;
+  sourcePort: string;
+  targetPort: string;
+  label: string;
 }
 
 export interface TraceabilityMatrixColumn {
@@ -73,11 +94,13 @@ export interface TraceabilityMatrixCell {
 export interface GeneratedView {
   id: string;
   title: string;
-  kind: 'requirements' | 'bdd' | 'activity' | 'traceability-matrix';
+  kind: 'requirements' | 'bdd' | 'activity' | 'traceability-matrix' | 'ibd';
   layout: 'auto';
-  layoutEngine: 'deterministic-layered-layout' | 'matrix-layout';
+  layoutEngine: 'deterministic-layered-layout' | 'matrix-layout' | 'elk-layered';
   nodes: ViewNode[];
   edges: ViewEdge[];
+  ports?: ViewPort[];
+  connections?: ViewConnection[];
   rows?: TraceabilityMatrixRow[];
   columns?: TraceabilityMatrixColumn[];
   cells?: TraceabilityMatrixCell[];
@@ -102,7 +125,7 @@ export interface ModelGenerationResult {
 }
 
 export interface ViewModelValidationError {
-  code: 'schema' | 'missing-reference';
+  code: 'schema' | 'missing-reference' | 'missing-endpoint' | 'invalid-connection';
   message: string;
   path: string;
 }
@@ -331,6 +354,10 @@ export function validateViewModel(candidate: unknown): ViewModelValidationResult
       }
     });
 
+    if (view.kind === 'ibd') {
+      validateIbdView(view, viewPath, nodeIds, errors);
+    }
+
     if (view.kind !== 'traceability-matrix') {
       return;
     }
@@ -407,6 +434,172 @@ export function validateViewModel(candidate: unknown): ViewModelValidationResult
   }
 
   return { valid: errors.length === 0 && findings.length === 0, errors, findings };
+}
+
+function validateIbdView(
+  view: Record<string, unknown>,
+  viewPath: string,
+  nodeIds: Set<string>,
+  errors: ViewModelValidationError[],
+) {
+  const readString = (record: Record<string, unknown>, keys: string[]) => {
+    for (const key of keys) {
+      const value = record[key];
+      if (typeof value === 'string' && value.trim() !== '') {
+        return value;
+      }
+    }
+    return '';
+  };
+
+  const portByScopedId = new Map<string, { interfaceId: string; path: string }>();
+  const registerPort = (port: unknown, fallbackOwnerId: string, path: string) => {
+    if (!isRecord(port)) {
+      errors.push({ code: 'schema', message: 'IBD 端口必须是对象。', path });
+      return;
+    }
+
+    const portId = readString(port, ['id', 'portId']);
+    const ownerId = readString(port, ['ownerId', 'nodeId', 'partId', 'componentId', 'elementId']) || fallbackOwnerId;
+    const interfaceId = readString(port, ['interfaceId', 'interface']);
+
+    if (portId === '') {
+      errors.push({ code: 'schema', message: 'IBD 端口缺少稳定 id。', path: `${path}.id` });
+    }
+    if (ownerId === '') {
+      errors.push({ code: 'schema', message: 'IBD 端口缺少所属部件 ownerId。', path: `${path}.ownerId` });
+    } else if (!nodeIds.has(ownerId)) {
+      errors.push({ code: 'missing-reference', message: `IBD 端口引用不存在的部件：${ownerId}。`, path: `${path}.ownerId` });
+    }
+    if (interfaceId === '') {
+      errors.push({ code: 'invalid-connection', message: `IBD 端口 ${portId || path} 接口不完整：缺少 interfaceId。`, path: `${path}.interfaceId` });
+    }
+
+    if (portId !== '' && ownerId !== '') {
+      portByScopedId.set(`${ownerId}:${portId}`, { interfaceId, path });
+    }
+  };
+
+  if (Array.isArray(view.nodes)) {
+    view.nodes.forEach((node, nodeIndex) => {
+      if (!isRecord(node) || typeof node.id !== 'string') {
+        return;
+      }
+      if (Array.isArray(node.ports)) {
+        node.ports.forEach((port, portIndex) => registerPort(port, node.id as string, `${viewPath}.nodes[${nodeIndex}].ports[${portIndex}]`));
+      }
+    });
+  }
+
+  if (view.ports !== undefined) {
+    if (!Array.isArray(view.ports)) {
+      errors.push({ code: 'schema', message: 'IBD view.ports 必须是数组。', path: `${viewPath}.ports` });
+    } else {
+      view.ports.forEach((port, portIndex) => registerPort(port, '', `${viewPath}.ports[${portIndex}]`));
+    }
+  }
+
+  const edgeConnections = Array.isArray(view.edges)
+    ? view.edges.flatMap((edge, edgeIndex) => {
+        if (!isRecord(edge)) {
+          return [];
+        }
+        const kind = readString(edge, ['kind']);
+        return /connection|connector|连接/.test(kind) ? [{ connection: edge, path: `${viewPath}.edges[${edgeIndex}]` }] : [];
+      })
+    : [];
+  const explicitConnections = Array.isArray(view.connections)
+    ? view.connections.flatMap((connection, connectionIndex) =>
+        isRecord(connection) ? [{ connection, path: `${viewPath}.connections[${connectionIndex}]` }] : [],
+      )
+    : [];
+
+  if (view.connections !== undefined && !Array.isArray(view.connections)) {
+    errors.push({ code: 'schema', message: 'IBD view.connections 必须是数组。', path: `${viewPath}.connections` });
+  }
+
+  if (edgeConnections.length > 0 && explicitConnections.length > 0) {
+    const edgesById = new Map(edgeConnections.map((entry) => [readString(entry.connection, ['id']) || entry.path, entry]));
+    const connectionIds = new Set<string>();
+    for (const explicitConnection of explicitConnections) {
+      const id = readString(explicitConnection.connection, ['id']) || explicitConnection.path;
+      connectionIds.add(id);
+      const edgeConnection = edgesById.get(id);
+      if (!edgeConnection) {
+        errors.push({
+          code: 'invalid-connection',
+          message: `IBD edges/connections 同步错误：connections 中的 ${id} 没有对应 edge。`,
+          path: explicitConnection.path,
+        });
+        continue;
+      }
+
+      for (const field of ['source', 'target', 'sourcePort', 'targetPort'] as const) {
+        if (readString(edgeConnection.connection, [field]) !== readString(explicitConnection.connection, [field])) {
+          errors.push({
+            code: 'invalid-connection',
+            message: `IBD edges/connections 同步错误：${id} 的 ${field} 不一致。`,
+            path: `${explicitConnection.path}.${field}`,
+          });
+        }
+      }
+    }
+
+    for (const edgeConnection of edgeConnections) {
+      const id = readString(edgeConnection.connection, ['id']) || edgeConnection.path;
+      if (!connectionIds.has(id)) {
+        errors.push({
+          code: 'invalid-connection',
+          message: `IBD edges/connections 同步错误：edges 中的 ${id} 没有对应 connection。`,
+          path: edgeConnection.path,
+        });
+      }
+    }
+  }
+
+  for (const { connection, path } of [...edgeConnections, ...explicitConnections]) {
+    const id = readString(connection, ['id']) || path;
+    const source = readString(connection, ['source']);
+    const target = readString(connection, ['target']);
+    const sourcePort = readString(connection, ['sourcePort', 'sourcePortId']);
+    const targetPort = readString(connection, ['targetPort', 'targetPortId']);
+
+    if (source === '' || !nodeIds.has(source)) {
+      errors.push({ code: 'missing-reference', message: `IBD 连接 ${id} 引用不存在的 source 部件：${source}。`, path: `${path}.source` });
+    }
+    if (target === '' || !nodeIds.has(target)) {
+      errors.push({ code: 'missing-reference', message: `IBD 连接 ${id} 引用不存在的 target 部件：${target}。`, path: `${path}.target` });
+    }
+    if (sourcePort === '') {
+      errors.push({ code: 'missing-endpoint', message: `IBD 连接 ${id} 缺少 sourcePort 端口端点。`, path: `${path}.sourcePort` });
+    }
+    if (targetPort === '') {
+      errors.push({ code: 'missing-endpoint', message: `IBD 连接 ${id} 缺少 targetPort 端口端点。`, path: `${path}.targetPort` });
+    }
+
+    const sourcePortRecord = sourcePort === '' ? undefined : portByScopedId.get(`${source}:${sourcePort}`);
+    const targetPortRecord = targetPort === '' ? undefined : portByScopedId.get(`${target}:${targetPort}`);
+    if (sourcePort !== '' && !sourcePortRecord) {
+      errors.push({ code: 'missing-reference', message: `IBD 连接 ${id} 引用不存在的 source 端口：${source}.${sourcePort}。`, path: `${path}.sourcePort` });
+    }
+    if (targetPort !== '' && !targetPortRecord) {
+      errors.push({ code: 'missing-reference', message: `IBD 连接 ${id} 引用不存在的 target 端口：${target}.${targetPort}。`, path: `${path}.targetPort` });
+    }
+    if (!sourcePortRecord || !targetPortRecord) {
+      continue;
+    }
+    if (sourcePortRecord.interfaceId === '' || targetPortRecord.interfaceId === '') {
+      errors.push({ code: 'invalid-connection', message: `IBD 连接 ${id} 接口不完整：端口缺少 interfaceId。`, path });
+      continue;
+    }
+    if (sourcePortRecord.interfaceId !== targetPortRecord.interfaceId) {
+      errors.push({
+        code: 'invalid-connection',
+        message: `IBD 连接 ${id} 接口不匹配：${sourcePortRecord.interfaceId} -> ${targetPortRecord.interfaceId}。`,
+        path,
+      });
+    }
+  }
 }
 
 function buildViewModel(confirmedData: ConfirmedTianwen2Data): GeneratedViewModel {
@@ -488,6 +681,10 @@ function buildViewModel(confirmedData: ConfirmedTianwen2Data): GeneratedViewMode
       label: '组成',
     }));
 
+
+  const ibdPorts = buildIbdPorts(confirmedData.subsystems);
+  const ibdConnections = buildIbdConnections(confirmedData.subsystems);
+  const ibdEdges = ibdConnections.map(connectionToEdge);
   const activityNodes: ViewNode[] = activities.map((activity, index) => ({
     id: activity.id,
     kind: 'activity',
@@ -555,7 +752,7 @@ function buildViewModel(confirmedData: ConfirmedTianwen2Data): GeneratedViewMode
   );
 
   return {
-    schemaVersion: '0.3.0',
+    schemaVersion: '0.4.0',
     projectId: confirmedData.projectId,
     source: 'confirmed-import-data',
     generatedFrom: confirmedData.packageName,
@@ -577,6 +774,21 @@ function buildViewModel(confirmedData: ConfirmedTianwen2Data): GeneratedViewMode
         layoutEngine: 'deterministic-layered-layout',
         nodes: bddNodes,
         edges: compositionEdges,
+      },
+      {
+        id: 'ibd-internal-block-view',
+        title: 'IBD 内部块图',
+        kind: 'ibd',
+        layout: 'auto',
+        layoutEngine: 'elk-layered',
+        nodes: bddNodes.map((node) => ({
+          ...node,
+          kind: 'ibd-part',
+          text: node.kind === 'system' ? 'IBD 边界部件，承载内部连接。' : 'IBD 内部部件，端口参与连接校验。',
+        })),
+        edges: ibdEdges,
+        ports: ibdPorts,
+        connections: ibdConnections,
       },
       {
         id: 'activity-flow-view',
@@ -602,7 +814,7 @@ function buildViewModel(confirmedData: ConfirmedTianwen2Data): GeneratedViewMode
     ],
     validation: {
       status: 'passed',
-      checkedRules: ['schema', 'missing-reference', 'coverage'],
+      checkedRules: ['schema', 'missing-reference', 'coverage', 'port-reference', 'connection-endpoint', 'interface-compatibility'],
     },
   };
 }
@@ -629,6 +841,13 @@ function buildSysmlText(confirmedData: ConfirmedTianwen2Data): string {
     lines.push('  }');
     lines.push('');
   }
+  for (const interfaceId of Array.from(new Set(buildIbdPorts(confirmedData.subsystems).map((port) => port.interfaceId)))) {
+    lines.push(`  interface def ${toSysmlIdentifier(interfaceId)} {`);
+    lines.push(`    doc /* IBD 端口接口 ${interfaceId}，用于端口连接静态校验。 */`);
+    lines.push('  }');
+    lines.push('');
+  }
+
 
   for (const subsystem of confirmedData.subsystems) {
     lines.push(`  part def ${toSysmlIdentifier(subsystem.id)} {`);
@@ -636,6 +855,19 @@ function buildSysmlText(confirmedData: ConfirmedTianwen2Data): string {
     if (subsystem.parentId) {
       lines.push(`    doc /* composition parent ${subsystem.parentId}。 */`);
     }
+    for (const port of buildPortsForSubsystem(subsystem.id)) {
+      lines.push(`    port ${toSysmlIdentifier(port.id)} : ${toSysmlIdentifier(port.interfaceId)};`);
+      lines.push(`    doc /* port ${port.id}：${port.label}，interface ${port.interfaceId}。 */`);
+    }
+    lines.push('  }');
+    lines.push('');
+  }
+
+  for (const connection of buildIbdConnections(confirmedData.subsystems)) {
+    lines.push(`  connection def ${toSysmlIdentifier(connection.id)} {`);
+    lines.push(`    end source : ${toSysmlIdentifier(connection.source)}::${toSysmlIdentifier(connection.sourcePort)};`);
+    lines.push(`    end target : ${toSysmlIdentifier(connection.target)}::${toSysmlIdentifier(connection.targetPort)};`);
+    lines.push(`    doc /* IBD 内部块连接：${connection.label}，${connection.source}.${connection.sourcePort} -> ${connection.target}.${connection.targetPort}。 */`);
     lines.push('  }');
     lines.push('');
   }
@@ -679,6 +911,94 @@ function buildSysmlText(confirmedData: ConfirmedTianwen2Data): string {
 
   lines.push('}');
   return lines.join('\n');
+}
+
+function buildIbdPorts(subsystems: ConfirmedSubsystem[]): ViewPort[] {
+  const subsystemIds = new Set(subsystems.map((subsystem) => subsystem.id));
+  return subsystems.flatMap((subsystem) => buildPortsForSubsystem(subsystem.id)).filter((port) => subsystemIds.has(port.ownerId));
+}
+
+function buildPortsForSubsystem(subsystemId: string): ViewPort[] {
+  const portsBySubsystem: Record<string, ViewPort[]> = {
+    'spacecraft-platform': [
+      { id: 'sample-return-mechanical-interface', label: '样品转移接口', kind: 'sample', ownerId: 'spacecraft-platform', interfaceId: 'sample-transfer' },
+      { id: 'platform-power-thermal-bus', label: '平台供电与热控接口', kind: 'power', ownerId: 'spacecraft-platform', interfaceId: 'power-thermal' },
+    ],
+    'sampling-return': [
+      { id: 'sample-transfer-out', label: '样品转移与封装接口', kind: 'sample', ownerId: 'sampling-return', interfaceId: 'sample-transfer' },
+      { id: 'sample-telemetry-out', label: '采样遥测数据接口', kind: 'data', ownerId: 'sampling-return', interfaceId: 'telemetry-data' },
+      { id: 'sample-power-thermal-in', label: '采样供电与热控接口', kind: 'power', ownerId: 'sampling-return', interfaceId: 'power-thermal' },
+    ],
+    'ttc-communication': [
+      { id: 'data-bus-in', label: '遥测数据接收接口', kind: 'data', ownerId: 'ttc-communication', interfaceId: 'telemetry-data' },
+      { id: 'telemetry-downlink', label: '测控通信下传接口', kind: 'data', ownerId: 'ttc-communication', interfaceId: 'telemetry-data' },
+    ],
+    'power-thermal': [
+      { id: 'power-thermal-service', label: '供电与热控服务接口', kind: 'power', ownerId: 'power-thermal', interfaceId: 'power-thermal' },
+      { id: 'thermal-control', label: '热控接口', kind: 'thermal', ownerId: 'power-thermal', interfaceId: 'power-thermal' },
+    ],
+    gnc: [
+      { id: 'attitude-control-data', label: '姿态控制数据接口', kind: 'control', ownerId: 'gnc', interfaceId: 'telemetry-data' },
+    ],
+  };
+
+  return portsBySubsystem[subsystemId] ?? [];
+}
+
+function buildIbdConnections(subsystems: ConfirmedSubsystem[]): ViewConnection[] {
+  const subsystemIds = new Set(subsystems.map((subsystem) => subsystem.id));
+  const connections: ViewConnection[] = [
+    {
+      id: 'connection-sample-transfer-to-platform',
+      kind: 'connection',
+      source: 'sampling-return',
+      target: 'spacecraft-platform',
+      sourcePort: 'sample-transfer-out',
+      targetPort: 'sample-return-mechanical-interface',
+      label: '样品转移连接',
+    },
+    {
+      id: 'connection-sample-telemetry-to-ttc',
+      kind: 'connection',
+      source: 'sampling-return',
+      target: 'ttc-communication',
+      sourcePort: 'sample-telemetry-out',
+      targetPort: 'data-bus-in',
+      label: '采样遥测数据连接',
+    },
+    {
+      id: 'connection-power-thermal-to-sampling',
+      kind: 'connection',
+      source: 'power-thermal',
+      target: 'sampling-return',
+      sourcePort: 'power-thermal-service',
+      targetPort: 'sample-power-thermal-in',
+      label: '供电与热控连接',
+    },
+    {
+      id: 'connection-gnc-data-to-ttc',
+      kind: 'connection',
+      source: 'gnc',
+      target: 'ttc-communication',
+      sourcePort: 'attitude-control-data',
+      targetPort: 'telemetry-downlink',
+      label: '姿态遥测数据连接',
+    },
+  ];
+
+  return connections.filter((connection) => subsystemIds.has(connection.source) && subsystemIds.has(connection.target));
+}
+
+function connectionToEdge(connection: ViewConnection): ViewEdge {
+  return {
+    id: connection.id,
+    kind: 'connection',
+    source: connection.source,
+    target: connection.target,
+    sourcePort: connection.sourcePort,
+    targetPort: connection.targetPort,
+    label: connection.label,
+  };
 }
 
 function inferMission(sourceText: string): string {

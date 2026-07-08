@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "0.3.0",
+  "schemaVersion": "0.4.0",
   "projectId": "tianwen-2",
   "source": "confirmed-import-data",
   "generatedFrom": "Tianwen2ConfirmedModel",
@@ -272,6 +272,218 @@
           "source": "spacecraft-platform",
           "target": "gnc",
           "label": "组成"
+        }
+      ]
+    },
+    {
+      "id": "ibd-internal-block-view",
+      "title": "IBD 内部块图",
+      "kind": "ibd",
+      "layout": "auto",
+      "layoutEngine": "elk-layered",
+      "nodes": [
+        {
+          "id": "spacecraft-platform",
+          "kind": "ibd-part",
+          "label": "航天器平台",
+          "text": "IBD 边界部件，承载内部连接。",
+          "elementId": "spacecraft-platform",
+          "position": {
+            "x": 320,
+            "y": 40
+          }
+        },
+        {
+          "id": "sampling-return",
+          "kind": "ibd-part",
+          "label": "采样返回分系统",
+          "text": "IBD 内部部件，端口参与连接校验。",
+          "elementId": "sampling-return",
+          "position": {
+            "x": 80,
+            "y": 220
+          }
+        },
+        {
+          "id": "ttc-communication",
+          "kind": "ibd-part",
+          "label": "测控通信分系统",
+          "text": "IBD 内部部件，端口参与连接校验。",
+          "elementId": "ttc-communication",
+          "position": {
+            "x": 310,
+            "y": 220
+          }
+        },
+        {
+          "id": "power-thermal",
+          "kind": "ibd-part",
+          "label": "电源与热控分系统",
+          "text": "IBD 内部部件，端口参与连接校验。",
+          "elementId": "power-thermal",
+          "position": {
+            "x": 540,
+            "y": 220
+          }
+        },
+        {
+          "id": "gnc",
+          "kind": "ibd-part",
+          "label": "制导导航与控制分系统",
+          "text": "IBD 内部部件，端口参与连接校验。",
+          "elementId": "gnc",
+          "position": {
+            "x": 770,
+            "y": 220
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "connection-sample-transfer-to-platform",
+          "kind": "connection",
+          "source": "sampling-return",
+          "target": "spacecraft-platform",
+          "sourcePort": "sample-transfer-out",
+          "targetPort": "sample-return-mechanical-interface",
+          "label": "样品转移连接"
+        },
+        {
+          "id": "connection-sample-telemetry-to-ttc",
+          "kind": "connection",
+          "source": "sampling-return",
+          "target": "ttc-communication",
+          "sourcePort": "sample-telemetry-out",
+          "targetPort": "data-bus-in",
+          "label": "采样遥测数据连接"
+        },
+        {
+          "id": "connection-power-thermal-to-sampling",
+          "kind": "connection",
+          "source": "power-thermal",
+          "target": "sampling-return",
+          "sourcePort": "power-thermal-service",
+          "targetPort": "sample-power-thermal-in",
+          "label": "供电与热控连接"
+        },
+        {
+          "id": "connection-gnc-data-to-ttc",
+          "kind": "connection",
+          "source": "gnc",
+          "target": "ttc-communication",
+          "sourcePort": "attitude-control-data",
+          "targetPort": "telemetry-downlink",
+          "label": "姿态遥测数据连接"
+        }
+      ],
+      "ports": [
+        {
+          "id": "sample-return-mechanical-interface",
+          "label": "样品转移接口",
+          "kind": "sample",
+          "ownerId": "spacecraft-platform",
+          "interfaceId": "sample-transfer"
+        },
+        {
+          "id": "platform-power-thermal-bus",
+          "label": "平台供电与热控接口",
+          "kind": "power",
+          "ownerId": "spacecraft-platform",
+          "interfaceId": "power-thermal"
+        },
+        {
+          "id": "sample-transfer-out",
+          "label": "样品转移与封装接口",
+          "kind": "sample",
+          "ownerId": "sampling-return",
+          "interfaceId": "sample-transfer"
+        },
+        {
+          "id": "sample-telemetry-out",
+          "label": "采样遥测数据接口",
+          "kind": "data",
+          "ownerId": "sampling-return",
+          "interfaceId": "telemetry-data"
+        },
+        {
+          "id": "sample-power-thermal-in",
+          "label": "采样供电与热控接口",
+          "kind": "power",
+          "ownerId": "sampling-return",
+          "interfaceId": "power-thermal"
+        },
+        {
+          "id": "data-bus-in",
+          "label": "遥测数据接收接口",
+          "kind": "data",
+          "ownerId": "ttc-communication",
+          "interfaceId": "telemetry-data"
+        },
+        {
+          "id": "telemetry-downlink",
+          "label": "测控通信下传接口",
+          "kind": "data",
+          "ownerId": "ttc-communication",
+          "interfaceId": "telemetry-data"
+        },
+        {
+          "id": "power-thermal-service",
+          "label": "供电与热控服务接口",
+          "kind": "power",
+          "ownerId": "power-thermal",
+          "interfaceId": "power-thermal"
+        },
+        {
+          "id": "thermal-control",
+          "label": "热控接口",
+          "kind": "thermal",
+          "ownerId": "power-thermal",
+          "interfaceId": "power-thermal"
+        },
+        {
+          "id": "attitude-control-data",
+          "label": "姿态控制数据接口",
+          "kind": "control",
+          "ownerId": "gnc",
+          "interfaceId": "telemetry-data"
+        }
+      ],
+      "connections": [
+        {
+          "id": "connection-sample-transfer-to-platform",
+          "kind": "connection",
+          "source": "sampling-return",
+          "target": "spacecraft-platform",
+          "sourcePort": "sample-transfer-out",
+          "targetPort": "sample-return-mechanical-interface",
+          "label": "样品转移连接"
+        },
+        {
+          "id": "connection-sample-telemetry-to-ttc",
+          "kind": "connection",
+          "source": "sampling-return",
+          "target": "ttc-communication",
+          "sourcePort": "sample-telemetry-out",
+          "targetPort": "data-bus-in",
+          "label": "采样遥测数据连接"
+        },
+        {
+          "id": "connection-power-thermal-to-sampling",
+          "kind": "connection",
+          "source": "power-thermal",
+          "target": "sampling-return",
+          "sourcePort": "power-thermal-service",
+          "targetPort": "sample-power-thermal-in",
+          "label": "供电与热控连接"
+        },
+        {
+          "id": "connection-gnc-data-to-ttc",
+          "kind": "connection",
+          "source": "gnc",
+          "target": "ttc-communication",
+          "sourcePort": "attitude-control-data",
+          "targetPort": "telemetry-downlink",
+          "label": "姿态遥测数据连接"
         }
       ]
     },
@@ -674,7 +886,10 @@
     "checkedRules": [
       "schema",
       "missing-reference",
-      "coverage"
+      "coverage",
+      "port-reference",
+      "connection-endpoint",
+      "interface-compatibility"
     ]
   }
 }

@@ -32,11 +32,14 @@ import {
 import {
   Background,
   Controls,
+  Handle,
   MiniMap,
+  Position,
   ReactFlow,
   ReactFlowProvider,
   type Edge,
   type Node,
+  type NodeProps,
 } from '@xyflow/react';
 import ELK, { type ElkNode } from 'elkjs/lib/elk.bundled';
 import {
@@ -700,6 +703,7 @@ function AgentDraftReview({
 function GeneratedModelWorkspace({ artifacts }: { artifacts: ModelGenerationResult }) {
   const requirementView = artifacts.viewModel.views.find((view) => view.kind === 'requirements');
   const bddView = artifacts.viewModel.views.find((view) => view.kind === 'bdd');
+  const ibdView = artifacts.viewModel.views.find((view) => view.kind === 'ibd');
   const activityView = artifacts.viewModel.views.find((view) => view.kind === 'activity');
   const traceabilityMatrixView = artifacts.viewModel.views.find((view) => view.kind === 'traceability-matrix');
 
@@ -752,6 +756,11 @@ function GeneratedModelWorkspace({ artifacts }: { artifacts: ModelGenerationResu
             <ModelViewCard view={bddView} />
           </Col>
         ) : null}
+        {ibdView ? (
+          <Col xs={24} xl={12}>
+            <ModelViewCard view={ibdView} />
+          </Col>
+        ) : null}
         {activityView ? (
           <Col xs={24} xl={12}>
             <ModelViewCard view={activityView} />
@@ -767,41 +776,58 @@ function GeneratedModelWorkspace({ artifacts }: { artifacts: ModelGenerationResu
   );
 }
 
+type DiagramPortData = {
+  id: string;
+  label: string;
+  kind: string;
+};
+
 type DiagramNodeData = {
   label: string;
   meta: string;
+  ports: DiagramPortData[];
 };
 
 const elk = new ELK();
-const flowNodeWidth = 190;
+const flowNodeWidth = 220;
 const flowNodeHeight = 82;
+const ibdFlowNodeHeight = 144;
+
+const ibdNodeTypes = { ibdPart: IbdPartNode };
 
 function ModelViewCard({ view }: { view: GeneratedView }) {
+  const diagramConnections = useMemo(() => (view.kind === 'ibd' && view.connections ? view.connections : view.edges), [view]);
   const initialNodes = useMemo<Node<DiagramNodeData>[]>(
     () =>
-      view.nodes.map((node) => ({
-        id: node.id,
-        type: 'default',
-        position: node.position,
-        data: {
-          label: node.label,
-          meta: node.id,
-        },
-        className: `flow-node flow-node-${node.kind}`,
-      })),
+      view.nodes.map((node) => {
+        const ports = collectDiagramPorts(view, node);
+        return {
+          id: node.id,
+          type: view.kind === 'ibd' ? 'ibdPart' : 'default',
+          position: node.position,
+          data: {
+            label: node.label,
+            meta: node.id,
+            ports,
+          },
+          className: `flow-node flow-node-${node.kind}`,
+        };
+      }),
     [view],
   );
   const initialEdges = useMemo<Edge[]>(
     () =>
-      view.edges.map((edge) => ({
+      diagramConnections.map((edge) => ({
         id: edge.id,
         source: edge.source,
         target: edge.target,
-        label: edge.label ?? edge.kind,
+        sourceHandle: edge.sourcePort,
+        targetHandle: edge.targetPort,
+        label: formatDiagramEdgeLabel(edge),
         type: 'smoothstep',
         className: `flow-edge flow-edge-${edge.kind}`,
       })),
-    [view],
+    [diagramConnections],
   );
   const [nodes, setNodes] = useState(initialNodes);
   const [edges, setEdges] = useState(initialEdges);
@@ -822,7 +848,7 @@ function ModelViewCard({ view }: { view: GeneratedView }) {
       children: initialNodes.map((node) => ({
         id: node.id,
         width: flowNodeWidth,
-        height: flowNodeHeight,
+        height: node.data.ports.length > 0 ? Math.max(ibdFlowNodeHeight, 76 + node.data.ports.length * 24) : flowNodeHeight,
       })),
       edges: initialEdges.map((edge) => ({
         id: edge.id,
@@ -854,11 +880,21 @@ function ModelViewCard({ view }: { view: GeneratedView }) {
 
   return (
     <Card className="workspace-card" title={view.title} extra={<Tag>{view.layoutEngine}</Tag>}>
+      {view.kind === 'ibd' ? (
+        <Alert
+          showIcon
+          type="info"
+          className="ibd-boundary-alert"
+          title="IBD 当前是可视化 + 静态校验"
+          description="展示天问二号内部部件、端口和连接线；不提供完整拖拽式图编辑。"
+        />
+      ) : null}
       <ReactFlowProvider>
         <div className="react-flow-canvas" aria-label={`${view.title} 自动布局图`}>
           <ReactFlow
             nodes={nodes}
             edges={edges}
+            nodeTypes={view.kind === 'ibd' ? ibdNodeTypes : undefined}
             fitView
             nodesDraggable={false}
             nodesConnectable={false}
@@ -873,6 +909,45 @@ function ModelViewCard({ view }: { view: GeneratedView }) {
     </Card>
   );
 }
+
+function IbdPartNode({ data }: NodeProps<Node<DiagramNodeData>>) {
+  return (
+    <div className="ibd-part-node">
+      <Text strong>{data.label}</Text>
+      <Space orientation="vertical" size={2} className="ibd-port-list">
+        {data.ports.map((port, index) => {
+          const top = 46 + index * 24;
+          return (
+            <span key={port.id} className="ibd-port-row">
+              <Handle id={port.id} type="target" position={Position.Left} className="ibd-port-handle" style={{ top }} />
+              <Text type="secondary">{port.label}</Text>
+              <Text code>{port.id}</Text>
+              <Handle id={port.id} type="source" position={Position.Right} className="ibd-port-handle" style={{ top }} />
+            </span>
+          );
+        })}
+      </Space>
+    </div>
+  );
+}
+
+function collectDiagramPorts(view: GeneratedView, node: GeneratedView['nodes'][number]): DiagramPortData[] {
+  const viewPorts = view.kind === 'ibd' ? (view.ports ?? []).filter((port) => port.ownerId === node.id) : [];
+  const nodePorts = node.ports ?? [];
+  const portsById = new Map<string, DiagramPortData>();
+  for (const port of [...viewPorts, ...nodePorts]) {
+    portsById.set(port.id, { id: port.id, label: port.label, kind: port.kind });
+  }
+  return Array.from(portsById.values());
+}
+
+function formatDiagramEdgeLabel(edge: GeneratedView['edges'][number] | NonNullable<GeneratedView['connections']>[number]) {
+  if (edge.sourcePort && edge.targetPort) {
+    return `${edge.label ?? edge.kind}: ${edge.sourcePort} → ${edge.targetPort}`;
+  }
+
+  return edge.label ?? edge.kind;
+ }
 
 function TraceabilityMatrixCard({
   view,

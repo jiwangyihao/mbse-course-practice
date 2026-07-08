@@ -105,6 +105,91 @@ type IssueFiveValidationResult = {
   findings?: IssueFiveValidationFinding[];
 };
 
+type IssueSixPort = Record<string, unknown> & {
+  id?: unknown;
+  label?: unknown;
+  name?: unknown;
+  kind?: unknown;
+  ownerId?: unknown;
+  nodeId?: unknown;
+  partId?: unknown;
+  componentId?: unknown;
+  elementId?: unknown;
+  interface?: unknown;
+  interfaceId?: unknown;
+};
+
+type IssueSixEndpoint = Record<string, unknown> & {
+  nodeId?: unknown;
+  partId?: unknown;
+  componentId?: unknown;
+  portId?: unknown;
+};
+
+type IssueSixConnection = Record<string, unknown> & {
+  id?: unknown;
+  kind?: unknown;
+  label?: unknown;
+  source?: unknown;
+  target?: unknown;
+  sourcePort?: unknown;
+  targetPort?: unknown;
+  sourcePortId?: unknown;
+  targetPortId?: unknown;
+  sourceEndpoint?: unknown;
+  targetEndpoint?: unknown;
+  endpoints?: unknown;
+};
+
+type IssueSixViewNode = IssueFiveViewNode & {
+  ports?: IssueSixPort[];
+};
+
+type IssueSixIbdView = Omit<IssueFiveView, 'nodes' | 'edges'> & {
+  nodes: IssueSixViewNode[];
+  edges?: IssueSixConnection[];
+  connections?: IssueSixConnection[];
+  ports?: IssueSixPort[];
+};
+
+function stringValue(value: unknown) {
+  return typeof value === 'string' ? value : '';
+}
+
+function textOf(...values: unknown[]) {
+  return values.filter((value): value is string => typeof value === 'string').join(' ');
+}
+
+
+function endpointPortId(endpoint: unknown) {
+  if (endpoint === null || typeof endpoint !== 'object') return '';
+  return stringValue((endpoint as IssueSixEndpoint).portId);
+}
+
+function connectionPortIds(connection: IssueSixConnection) {
+  const endpoints = Array.isArray(connection.endpoints) ? connection.endpoints : [];
+
+  return [
+    stringValue(connection.sourcePort),
+    stringValue(connection.targetPort),
+    stringValue(connection.sourcePortId),
+    stringValue(connection.targetPortId),
+    endpointPortId(connection.sourceEndpoint),
+    endpointPortId(connection.targetEndpoint),
+    endpointPortId(connection.source),
+    endpointPortId(connection.target),
+    ...endpoints.map(endpointPortId),
+  ].filter(Boolean);
+}
+
+
+function extractSysmlDefinitionBlock(sysmlText: string, definitionKind: string, identifier: string) {
+  const pattern = new RegExp(`\\b${definitionKind}\\s+def\\s+${identifier}\\s*\\{(?<body>[\\s\\S]*?)\\n\\s*\\}`, 'i');
+  return pattern.exec(sysmlText)?.groups?.body ?? '';
+}
+
+
+
 
 
 describe('天问二号确认数据领域模型生成契约', () => {
@@ -216,7 +301,87 @@ describe('天问二号确认数据领域模型生成契约', () => {
     expect(danglingFlowEdges, '每条活动流边都必须连接活动图中已声明的行为节点，避免 UI 渲染悬空边').toEqual([]);
   });
 
+  it('从确认数据生成 IBD 视图并表达部件、端口和连接', () => {
+    const artifacts = generateTianwen2ModelArtifacts(confirmedTianwen2Data);
+    const views = artifacts.viewModel.views as unknown as IssueSixIbdView[];
+    const ibdView = views.find((view) => view.kind === 'ibd');
+
+    expect(views.map((view) => view.kind), 'JSON 视图模型必须包含 kind=ibd，而不是只生成 requirements/bdd/activity/traceability-matrix').toContain('ibd');
+    expect(ibdView, 'issue #6 要求从确认数据生成可渲染的 IBD 内部块图视图').toBeDefined();
+    expect(`${ibdView?.id ?? ''} ${ibdView?.title ?? ''}`, 'IBD 视图的公开 id 或标题必须表达内部块图/IBD，便于用户识别视图入口').toMatch(/ibd|内部块图|internal block/i);
+
+    const sysmlWithoutDocs = artifacts.sysmlText.replace(/\bdoc\s*\/\*[\s\S]*?\*\//gi, '');
+    const interfaceDefinitions = sysmlWithoutDocs.match(/\binterface\s+def\s+[A-Za-z_][\w]*/g) ?? [];
+    expect(interfaceDefinitions.length, 'SysML 文本必须声明可机读 interface def，不能只在 doc 注释里写 interface 名称').toBeGreaterThanOrEqual(3);
+    expect(sysmlWithoutDocs, 'SysML 文本必须声明样品转移接口定义，供 IBD 端口用类型引用').toMatch(/\binterface\s+def\s+sample_transfer\b/i);
+
+    const samplingReturnPartBlock = extractSysmlDefinitionBlock(sysmlWithoutDocs, 'part', 'sampling_return');
+    expect(samplingReturnPartBlock.trim(), 'sampling_return part def 必须包含非注释的端口声明').not.toBe('');
+    expect(
+      samplingReturnPartBlock,
+      'part 内必须用 port 声明把 sample_transfer_out 绑定到 sample_transfer 接口，而不是只靠说明文字',
+    ).toMatch(/\bport\s+sample_transfer_out\s*:\s*sample_transfer\s*;/i);
+
+    const sampleTransferConnectionBlock = extractSysmlDefinitionBlock(sysmlWithoutDocs, 'connection', 'connection_sample_transfer_to_platform');
+    expect(sampleTransferConnectionBlock.trim(), 'connection_sample_transfer_to_platform 必须包含非注释的端点语义').not.toBe('');
+    expect(
+      sampleTransferConnectionBlock,
+      'connection def 必须用 source/end source/from 等稳定字段表达源端点，不能只写在 doc 注释里',
+    ).toMatch(/\b(?:end\s+source|source(?:Endpoint|Port)?|from)\b/i);
+    expect(
+      sampleTransferConnectionBlock,
+      'connection def 必须用 target/end target/to 等稳定字段表达目标端点，不能只写在 doc 注释里',
+    ).toMatch(/\b(?:end\s+target|target(?:Endpoint|Port)?|to)\b/i);
+    expect(sampleTransferConnectionBlock, '样品转移连接块必须显式引用源端口 sample_transfer_out').toMatch(/\bsample_transfer_out\b/i);
+    expect(sampleTransferConnectionBlock, '样品转移连接块必须显式引用目标端口 sample_return_mechanical_interface').toMatch(/\bsample_return_mechanical_interface\b/i);
+
+    const ibdNodes = ibdView?.nodes ?? [];
+    const nodeText = ibdNodes.map((node) => `${node.id} ${node.label} ${node.kind} ${node.text ?? ''}`).join('\n');
+    expect(nodeText, 'IBD 必须展示航天器平台以及天问二号关键内部部件').toMatch(/航天器平台/);
+    expect(nodeText).toMatch(/采样返回分系统|采样返回|sampling-return/);
+    expect(nodeText).toMatch(/测控通信分系统|测控通信|ttc-communication/);
+    expect(nodeText).toMatch(/电源与热控分系统|电源与热控|power-thermal/);
+    expect(nodeText).toMatch(/制导导航与控制分系统|制导导航|gnc/);
+    expect(
+      ibdNodes.every((node) => /ibd|part|component|system|subsystem|部件|组件|分系统/.test(`${node.kind} ${node.label}`)),
+      'IBD 节点必须带 part/component/system/subsystem 语义，不能复用无 IBD 语义的纯 BDD 节点',
+    ).toBe(true);
+
+    const ports = [
+      ...(ibdView?.ports ?? []),
+      ...ibdNodes.flatMap((node) => (node.ports ?? []).map((port) => ({ ...port, nodeId: port.nodeId ?? node.id }))),
+    ];
+    const portRows = ports.map((port) => ({
+      id: stringValue(port.id),
+      ownerId: stringValue(port.ownerId) || stringValue(port.nodeId) || stringValue(port.partId) || stringValue(port.componentId) || stringValue(port.elementId),
+      text: textOf(port.id, port.label, port.name, port.kind, port.interface, port.interfaceId, port.ownerId, port.nodeId, port.partId, port.componentId, port.elementId),
+    }));
+    const portText = portRows.map((port) => `${port.id} ${port.ownerId} ${port.text}`).join('\n');
+
+    expect(portRows.length, 'IBD 必须能定位端口数据，端口可在节点 ports 或视图 ports 字段中声明').toBeGreaterThan(0);
+    expect(portRows.every((port) => port.id.length > 0 && port.ownerId.length > 0), '每个 IBD 端口必须有稳定端口 ID，并能定位到所属部件').toBe(true);
+    expect(portText, '端口必须覆盖采样返回链路需要的样品转移或样品封装接口').toMatch(/样品.*(转移|封装)|采样.*(转移|封装)|sample.*(transfer|container|seal)/i);
+    expect(portText, '端口必须覆盖测控通信链路需要的遥测或数据接口').toMatch(/遥测|数据|telemetry|data/i);
+    expect(portText, '端口必须覆盖电源与热控链路需要的供电或热控接口').toMatch(/供电|电源|热控|power|thermal/i);
+
+    const connections = [...(ibdView?.edges ?? []), ...(ibdView?.connections ?? [])].filter((connection) =>
+      /connection|connector|连接/.test(stringValue(connection.kind)),
+    );
+    const connectionRows = connections.map((connection) => ({
+      portIds: connectionPortIds(connection),
+      text: textOf(connection.id, connection.kind, connection.label, connection.source, connection.target, connection.sourcePort, connection.targetPort, connection.sourcePortId, connection.targetPortId, ...connectionPortIds(connection)),
+    }));
+    const connectionText = connectionRows.map((connection) => `${connection.portIds.join(' ')} ${connection.text}`).join('\n');
+
+    expect(connections.length, 'IBD 必须包含 kind=connection/connector 的连接关系，而不是孤立部件列表').toBeGreaterThan(0);
+    expect(connectionRows.every((connection) => connection.portIds.length >= 2), 'IBD 连接线必须引用具体端口端点，不能只连部件节点').toBe(true);
+    expect(connectionText, 'IBD 连接必须包含采样返回相关端口连接').toMatch(/采样|样品|sample|sampling/i);
+    expect(connectionText, 'IBD 连接必须包含测控通信相关端口连接').toMatch(/测控|通信|遥测|数据|ttc|telemetry|data/i);
+    expect(connectionText, 'IBD 连接必须包含电源或热控相关端口连接').toMatch(/电源|供电|热控|power|thermal/i);
+  });
+
   it('从确认数据生成需求追溯矩阵并表达结构列、行为列与覆盖状态', () => {
+
     const artifacts = generateTianwen2ModelArtifacts(confirmedTianwen2Data);
     const views = artifacts.viewModel.views as unknown as IssueFiveView[];
     const activityView = views.find((view) => view.kind === 'activity');
@@ -311,6 +476,167 @@ describe('天问二号确认数据领域模型生成契约', () => {
       coverageFinding?.path,
       'finding path 必须指向矩阵行或需求元素路径，避免只给不可操作的文本提示',
     ).toMatch(/\$\.views\[\d+\]\.(rows|nodes)\[\d+\]|REQ-UNCOVERED-001/);
+  });
+
+  it('校验器报告 IBD 端口引用缺失、连接端点缺失和接口不完整', () => {
+    const invalidViewModel = {
+      schemaVersion: '0.4.0',
+      projectId: 'ibd-invalid-fixture',
+      source: 'confirmed-import-data',
+      generatedFrom: 'IssueSixInvalidFixture',
+      views: [
+        {
+          id: 'ibd-invalid-view',
+          title: '内部块图错误连接夹具',
+          kind: 'ibd',
+          layout: 'auto',
+          layoutEngine: 'elk-layered',
+          nodes: [
+            {
+              id: 'sampling-return',
+              label: '采样返回分系统',
+              kind: 'ibd-part',
+              ports: [{ id: 'sample-transfer-out', label: '样品转移接口', interfaceId: 'sample-transfer' }],
+            },
+            {
+              id: 'ttc-communication',
+              label: '测控通信分系统',
+              kind: 'ibd-part',
+              ports: [{ id: 'telemetry-downlink', label: '遥测数据接口', interfaceId: 'telemetry-data' }],
+            },
+            {
+              id: 'power-thermal',
+              label: '电源与热控分系统',
+              kind: 'ibd-part',
+              ports: [{ id: 'thermal-control', label: '热控接口', interfaceId: 'thermal-control' }],
+            },
+          ],
+          edges: [
+            {
+              id: 'missing-port-connector',
+              kind: 'connector',
+              label: '引用不存在端口的样品转移连接',
+              source: 'sampling-return',
+              target: 'missing-payload-container',
+              sourcePort: 'sample-transfer-out',
+              targetPort: 'missing-sample-container-in',
+            },
+            {
+              id: 'missing-endpoint-connector',
+              kind: 'connection',
+              label: '缺少目标端口的遥测连接',
+              source: 'ttc-communication',
+              target: 'sampling-return',
+              sourcePort: 'telemetry-downlink',
+            },
+            {
+              id: 'incomplete-interface-connector',
+              kind: 'connector',
+              label: '遥测数据错误连接到热控接口',
+              source: 'ttc-communication',
+              target: 'power-thermal',
+              sourcePort: 'telemetry-downlink',
+              targetPort: 'thermal-control',
+            },
+          ],
+        },
+      ],
+      validation: { status: 'failed', checkedRules: ['schema', 'missing-reference', 'missing-endpoint', 'invalid-connection'] },
+    };
+
+    const validation = validateViewModel(invalidViewModel) as IssueFiveValidationResult;
+    const findings = [...validation.errors, ...(validation.findings ?? [])];
+    const codes = findings.map((finding) => finding.code);
+    const findingText = findings.map((finding) => `${finding.code} ${finding.message ?? ''} ${finding.path ?? ''}`).join('\n');
+
+    expect(validation.valid, 'IBD 存在端口引用缺失、连接端点缺失和接口不完整时静态校验必须失败').toBe(false);
+    expect(codes, '校验器必须用稳定 code 标识端口引用缺失，不能只返回笼统 schema 错误').toEqual(expect.arrayContaining(['missing-reference']));
+    expect(codes, '校验器必须用稳定 code 标识 connection/connector 缺失 sourcePort 或 targetPort').toEqual(expect.arrayContaining(['missing-endpoint']));
+    expect(
+      codes.some((code) => /incomplete-interface|invalid-connection/.test(code)),
+      '校验器必须用 incomplete-interface 或 invalid-connection 稳定标识接口不完整/不匹配的 IBD 连接',
+    ).toBe(true);
+    expect(findingText, '校验消息或路径必须包含端口语义，便于 UI 定位端口引用缺失').toMatch(/端口|port/i);
+    expect(findingText, '校验消息或路径必须包含连接语义，便于 UI 定位 connection/connector').toMatch(/连接|connection|connector/i);
+    expect(findingText, '校验消息或路径必须包含接口语义，便于 UI 区分接口不完整或不匹配').toMatch(/接口|interface/i);
+  });
+
+  it('校验器发现同一 IBD 连接在 edges 与 connections 双写后发生端口漂移', () => {
+    const driftedViewModel = {
+      schemaVersion: '0.4.0',
+      projectId: 'ibd-drift-fixture',
+      source: 'confirmed-import-data',
+      generatedFrom: 'IssueSixDriftFixture',
+      views: [
+        {
+          id: 'ibd-drift-view',
+          title: '内部块图端口漂移夹具',
+          kind: 'ibd',
+          layout: 'auto',
+          layoutEngine: 'elk-layered',
+          nodes: [
+            {
+              id: 'sampling-return',
+              label: '采样返回分系统',
+              kind: 'ibd-part',
+              ports: [
+                { id: 'sample-transfer-out', label: '样品转移接口', interfaceId: 'sample-transfer' },
+                { id: 'sample-transfer-backup', label: '备份样品转移接口', interfaceId: 'sample-transfer' },
+              ],
+            },
+            {
+              id: 'spacecraft-platform',
+              label: '航天器平台',
+              kind: 'ibd-part',
+              ports: [
+                { id: 'sample-return-mechanical-interface', label: '样品接收接口', interfaceId: 'sample-transfer' },
+                { id: 'sample-return-backup-interface', label: '备份样品接收接口', interfaceId: 'sample-transfer' },
+              ],
+            },
+          ],
+          edges: [
+            {
+              id: 'connection-drift-sample-transfer',
+              kind: 'connection',
+              label: '样品转移连接',
+              source: 'sampling-return',
+              target: 'spacecraft-platform',
+              sourcePort: 'sample-transfer-out',
+              targetPort: 'sample-return-mechanical-interface',
+            },
+          ],
+          connections: [
+            {
+              id: 'connection-drift-sample-transfer',
+              kind: 'connection',
+              label: '样品转移连接',
+              source: 'sampling-return',
+              target: 'spacecraft-platform',
+              sourcePort: 'sample-transfer-backup',
+              targetPort: 'sample-return-mechanical-interface',
+            },
+          ],
+        },
+      ],
+      validation: { status: 'failed', checkedRules: ['schema', 'missing-reference', 'invalid-connection'] },
+    };
+
+    const validation = validateViewModel(driftedViewModel) as IssueFiveValidationResult;
+    const findings = [...validation.errors, ...(validation.findings ?? [])];
+    const codes = findings.map((finding) => finding.code);
+    const invalidConnectionText = findings
+      .filter((finding) => finding.code === 'invalid-connection')
+      .map((finding) => `${finding.code} ${finding.message ?? ''} ${finding.path ?? ''}`)
+      .join('\n');
+
+    expect(validation.valid, '同一 IBD 连接在 edges 与 connections 中端口不同步时校验必须失败').toBe(false);
+    expect(codes, '端口漂移必须用 invalid-connection 稳定标识，避免被当成普通 schema 或缺失引用').toEqual(expect.arrayContaining(['invalid-connection']));
+    expect(invalidConnectionText, '漂移报告必须定位到发生双写的连接 ID').toMatch(/connection-drift-sample-transfer/);
+    expect(
+      invalidConnectionText,
+      '漂移报告的 message/path 必须明确 edges 与 connections 的同步、一致性或漂移语义',
+    ).toMatch(/edges.*connections|connections.*edges|同步|一致|漂移|drift/i);
+    expect(invalidConnectionText, '漂移报告必须指出 sourcePort/targetPort 端口字段，而不是只给笼统连接错误').toMatch(/sourcePort|targetPort|端口|port/i);
   });
 
   it('校验器报告 schema 错误和缺失引用', () => {

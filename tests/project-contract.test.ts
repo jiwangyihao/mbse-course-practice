@@ -179,6 +179,40 @@ describe('天问二号样例项目端到端契约', () => {
     expect(mainEntry, 'React Flow 样式基线必须在公共入口加载，否则节点、边和视口控件会退化').toContain("import '@xyflow/react/dist/style.css';");
   });
 
+  it('IBD React Flow 连接使用 sourcePort 和 targetPort 作为具体 handle 锚点', () => {
+    const appEntry = readRequiredTextFile(appEntryPath, 'App 前端入口');
+    const edgeMapping = appEntry.match(/diagramConnections\.map\(\(edge\)\s*=>\s*\(\{(?<body>[\s\S]*?)\}\)\s*,?\s*\)/);
+    const edgeMappingBody = edgeMapping?.groups?.body ?? '';
+
+    expect(edgeMapping, 'IBD/图视图必须把连接映射为 React Flow edge 对象，不能只渲染文本列表').not.toBeNull();
+    expect(edgeMappingBody, 'React Flow edge 仍应连接 source 节点').toMatch(/\bsource\s*:\s*edge\.source\b/);
+    expect(edgeMappingBody, 'React Flow edge 仍应连接 target 节点').toMatch(/\btarget\s*:\s*edge\.target\b/);
+    expect(
+      edgeMappingBody,
+      'IBD 连接必须把 sourcePort 传给 React Flow sourceHandle，让边锚定到具体源端口，而不是只写进 label',
+    ).toMatch(/\bsourceHandle\s*:\s*edge\.sourcePort\b/);
+    expect(
+      edgeMappingBody,
+      'IBD 连接必须把 targetPort 传给 React Flow targetHandle，让边锚定到具体目标端口，而不是只写进 label',
+    ).toMatch(/\btargetHandle\s*:\s*edge\.targetPort\b/);
+    expect(edgeMappingBody, '端口可以作为可读标签补充展示，但不能替代 React Flow handle 锚点').toMatch(/\blabel\s*:\s*formatDiagramEdgeLabel\(edge\)/);
+  });
+
+  it('IBD 端口渲染同时合并 view.ports 与 node.ports', () => {
+    const appEntry = readRequiredTextFile(appEntryPath, 'App 前端入口');
+    const portCollector = appEntry.match(/function\s+collectDiagramPorts[\s\S]*?\n}\s*\n\s*function\s+formatDiagramEdgeLabel/);
+    const portCollectorBody = portCollector?.[0] ?? '';
+    const mergesViewAndNodePorts = /for\s*\([^)]*of\s*\[\s*\.\.\.viewPorts\s*,\s*\.\.\.nodePorts\s*\]/.test(portCollectorBody);
+
+    expect(portCollector, 'App 必须保留 collectDiagramPorts 端口收集入口，用于展示部件端口').not.toBeNull();
+    expect(portCollectorBody, 'IBD 端口收集必须从 view.ports 派生 viewPorts，兼容视图级端口声明').toMatch(/\bviewPorts\s*=\s*view\.kind\s*===\s*['"]ibd['"][\s\S]*\bview\.ports\b/);
+    expect(portCollectorBody, 'IBD 端口收集必须从 node.ports 派生 nodePorts，兼容合法的节点级端口声明').toMatch(/\bnodePorts\s*=[\s\S]*\bnode\.ports\b/);
+    expect(
+      mergesViewAndNodePorts,
+      '端口列表必须在 collectDiagramPorts 中用 [...viewPorts, ...nodePorts] 合并；只读 view.ports 会让合法 node-scoped IBD 视图通过校验但 UI 不显示端口',
+    ).toBe(true);
+  });
+
   it('读取内置样例项目元数据时声明课程大实践 MBSE 建模工作台边界', () => {
     const metadata = readRequiredJsonObject(metadataPath, '天问二号样例项目元数据');
     const metadataText = collectStringEntries(metadata)
@@ -369,4 +403,73 @@ describe('天问二号样例项目端到端契约', () => {
     expect(workspace.getByText(/Schema 校验通过/)).toBeVisible();
     expect(workspace.getByText(/引用校验通过/)).toBeVisible();
   });
+  it('确认生成后界面渲染只读 IBD 并声明不是完整拖拽式图编辑器', async () => {
+    render(React.createElement(App));
+
+    const sourceMaterial = [
+      '天问二号任务面向小行星取样返回和主带彗星探测。',
+      'REQ-TW2-001：任务应支持对目标小行星开展近距离探测并完成取样返回。',
+      'REQ-TW2-002：采样返回分系统应完成样品采集、封装、转移和返回舱交付。',
+      'REQ-TW2-003：电源与热控分系统应在深空飞行和近距离探测阶段提供能源与热环境保障。',
+      'REQ-TW2-004：探测器应通过测控通信分系统完成深空测控、数据下传和遥测接收。',
+      '航天器平台应为采样返回、测控通信、电源与热控、制导导航与控制分系统提供统一承载。',
+    ].join('\n');
+    const confirmedData = extractTianwen2ConfirmedData(sourceMaterial);
+    const draft = generateTianwen2ModelArtifacts(confirmedData);
+    tauriInvokeMock.mockImplementation(async (command: string) => {
+      if (command === 'start_agent_sidecar') return { state: 'running', pid: 4242, endpoint: 'local://agent-sidecar/ibd-test' };
+      if (command === 'extract_agent_candidates') {
+        return {
+          sessionId: 'ibd-extraction-session',
+          events: [
+            { type: 'progress', message: 'Sidecar 已接收源材料并开始抽取候选项。', percent: 20 },
+            { type: 'extraction', message: '已抽取确认候选项。', confirmedData },
+          ],
+        };
+      }
+      if (command === 'generate_agent_model_draft') {
+        return {
+          sessionId: 'ibd-draft-session',
+          events: [{ type: 'model-draft', message: '模型草案已通过 IBD 静态校验。', draft }],
+        };
+      }
+      throw new Error(`未预期的 Tauri 命令：${command}`);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /新建项目 \/ 导入材料（#3）/ }));
+    fireEvent.change(screen.getByRole('textbox', { name: /源材料|材料内容|粘贴/ }), {
+      target: { value: sourceMaterial },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /抽取候选|生成候选|开始抽取/ }));
+    expect(await screen.findByText(/候选使命/)).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: /确认 Agent 输出并生成模型草案/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /^确认 Agent 输出$/ }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: /材料导入与确认向导/ })).not.toBeInTheDocument();
+    });
+
+    const generatedWorkspace = screen.getByText(/SysML v2 文本/).closest('.generated-workspace');
+    expect(generatedWorkspace, '确认后应进入生成模型工作区，IBD 断言只在项目工作区检查').not.toBeNull();
+    const workspace = within(generatedWorkspace as HTMLElement);
+
+    const ibdCanvas = workspace.getByLabelText(/IBD|内部块图.*自动布局图/);
+    expect(ibdCanvas, 'IBD 必须复用 React Flow 自动布局画布呈现').toBeVisible();
+    const ibdCard = ibdCanvas.closest('.workspace-card');
+    expect(ibdCard, '确认生成后工作区必须出现可定位的 IBD/内部块图视图卡片').not.toBeNull();
+    const ibdWorkspace = within(ibdCard as HTMLElement);
+
+    expect(ibdWorkspace.getByText(/^IBD 内部块图$/), '确认生成后 IBD 视图卡片标题必须保留领域术语').toBeVisible();
+    expect(ibdWorkspace.getByText(/可视化\s*\+\s*静态校验|可视化.*静态校验/), '界面必须声明 IBD 当前边界是可视化 + 静态校验').toBeVisible();
+    expect(
+      ibdWorkspace.getByText(/不提供完整拖拽式图编辑|非完整图编辑器|不是完整.*图编辑器/),
+      '界面必须明确 IBD 不是完整拖拽式图编辑器，避免把只读校验视图扩展成编辑器',
+    ).toBeVisible();
+
+    const appEntry = readRequiredTextFile(appEntryPath, 'App 前端入口');
+    expect(appEntry, 'IBD 所在 React Flow 画布必须关闭节点拖拽，保持只读边界').toMatch(/nodesDraggable\s*=\s*\{false\}|nodesDraggable\s*:\s*false/);
+    expect(appEntry, 'IBD 所在 React Flow 画布必须关闭用户连线，避免伪装成完整图编辑器').toMatch(/nodesConnectable\s*=\s*\{false\}|nodesConnectable\s*:\s*false/);
+  });
+
 });
