@@ -5,6 +5,7 @@ import React from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { vi } from 'vitest';
 import { extractTianwen2ConfirmedData, generateTianwen2ModelArtifacts, validateViewModel } from '../src/domain/modelGeneration';
+import { exportCourseDeliveryPackage, type CourseDeliveryPackageArtifact } from '../src/domain/courseDeliveryPackage';
 import App from '../src/App';
 
 const tauriInvokeMock = vi.hoisted(() => vi.fn());
@@ -32,6 +33,19 @@ type ProjectFileEntry = StringEntry & {
   absolutePath: string;
   content: string;
 };
+
+type PersistedProjectFile = {
+  path: string;
+  content: string;
+};
+
+type PersistedTianwen2ProjectSnapshot = {
+  manifestPath: string;
+  manifest: JsonObject;
+  files: PersistedProjectFile[];
+};
+
+const runtimePoisonToken = 'UI_RUNTIME_POISON_SHOULD_NOT_APPEAR_IN_DELIVERY_PACKAGE';
 
 const repoRoot = normalize(process.cwd());
 const packageJsonPath = resolve(repoRoot, 'package.json');
@@ -179,6 +193,102 @@ function regexpForLiteral(value: string) {
   return new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
 }
 
+function isJsonObject(value: unknown): value is JsonObject {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function parsePersistedProjectFile(value: unknown): PersistedProjectFile {
+  if (!isJsonObject(value)) {
+    throw new Error('持久化项目文件条目必须是 JSON 对象');
+  }
+
+  const path = value.path;
+  const content = value.content;
+
+  if (typeof path !== 'string' || path.trim() === '') {
+    throw new Error('持久化项目文件条目必须包含非空 path');
+  }
+  if (typeof content !== 'string' || content.trim() === '') {
+    throw new Error(`持久化项目文件 ${path} 必须包含非空 content`);
+  }
+
+  return { path, content };
+}
+
+function parsePersistedProjectSnapshot(value: unknown): PersistedTianwen2ProjectSnapshot {
+  if (!isJsonObject(value)) {
+    throw new Error('持久化项目快照必须是 JSON 对象');
+  }
+
+  const manifestPath = value.manifestPath;
+  const manifest = value.manifest;
+  const files = value.files;
+
+  if (typeof manifestPath !== 'string' || manifestPath.trim() === '') {
+    throw new Error('持久化项目快照必须包含 project.json 的 manifestPath');
+  }
+
+  if (!isJsonObject(manifest)) {
+    throw new Error('持久化项目快照必须包含 project.json 形状的 manifest');
+  }
+  if (!Array.isArray(files)) {
+    throw new Error('持久化项目快照必须包含文件内容数组');
+  }
+
+  return {
+    manifestPath,
+    manifest,
+    files: files.map(parsePersistedProjectFile),
+  };
+}
+
+function createPersistedTianwen2ProjectSnapshot(): PersistedTianwen2ProjectSnapshot {
+  const manifest = readRequiredJsonObject(metadataPath, '天问二号样例项目元数据');
+  const files = collectDeclaredProjectFiles(manifest).map(({ value, content }) => ({
+    path: value,
+    content,
+  }));
+  const persistedSnapshot: PersistedTianwen2ProjectSnapshot = { manifestPath: 'sample-projects/tianwen-2/project.json', manifest, files };
+  const hydratedWorkbenchRuntimeState = {
+    persistedSnapshot,
+    generatedArtifacts: {
+      sysmlText: runtimePoisonToken,
+      viewModel: { projectId: runtimePoisonToken, views: [] },
+      validation: { valid: false, errors: [{ message: runtimePoisonToken }], findings: [] },
+    },
+  };
+
+  return parsePersistedProjectSnapshot(JSON.parse(JSON.stringify(hydratedWorkbenchRuntimeState.persistedSnapshot)));
+}
+
+function expectRequiredDeliveryArtifact(
+  artifacts: CourseDeliveryPackageArtifact[],
+  expected: {
+    id: string;
+    type: string;
+    path: RegExp;
+    title: RegExp;
+    source: RegExp;
+  },
+) {
+  const artifact = artifacts.find((candidate) => candidate.type === expected.type);
+
+  expect(artifact, `交付包必须包含必需工件类型 ${expected.type}`).toBeDefined();
+  if (!artifact) {
+    throw new Error(`交付包缺少必需工件类型 ${expected.type}`);
+  }
+
+  expect(artifact.id, `${expected.type} 工件应暴露稳定 id`).toBe(expected.id);
+  expect(artifact.path, `${expected.type} 工件应暴露可交付路径`).toMatch(expected.path);
+  expect(artifact.type, `${expected.type} 工件应暴露稳定 type`).toBe(expected.type);
+  expect(artifact.title, `${expected.type} 工件应暴露用户可读标题`).toMatch(expected.title);
+  expect(artifact.source, `${expected.type} 工件应声明来自持久化项目状态的 source`).toMatch(expected.source);
+  expect(artifact.required, `${expected.type} 工件必须标记为课程交付必需项`).toBe(true);
+  expect(artifact.status, `${expected.type} 工件应在样例项目状态中可生成或已包含`).toBe('included');
+
+  return artifact;
+}
+
 describe('天问二号样例项目端到端契约', () => {
   it('前端入口使用 Ant Design 组件库和全局样式基线', () => {
     const packageJson = readRequiredJsonObject(packageJsonPath, 'package.json');
@@ -306,6 +416,145 @@ describe('天问二号样例项目端到端契约', () => {
       expect(viewModelText).toMatch(/天问二号|Tianwen-2|tianwen-2/i);
       expect(viewModelText).toMatch(/views?|视图|nodes?|edges?|requirements?|工件/i);
     }
+  });
+
+  it('issue #8 tracer：导出完整课程交付包只读取已保存的天问二号项目状态', () => {
+    const persistedSnapshot = createPersistedTianwen2ProjectSnapshot();
+
+    const deliveryPackage = exportCourseDeliveryPackage(persistedSnapshot);
+
+    expect(deliveryPackage.projectId, '交付包必须绑定已保存项目 ID，而不是当前 UI 状态').toBe('tianwen-2');
+    expect(deliveryPackage.source, '导出 seam 必须声明只消费 persisted project state').toBe('persisted-project-state');
+    expect(JSON.stringify(deliveryPackage), '交付包不得读取或泄漏未传入的 UI runtime/generatedArtifacts 状态').not.toContain(runtimePoisonToken);
+
+    expect(deliveryPackage.artifacts.length, '完整课程交付包至少应覆盖模型、校验、视图素材、演示说明和清单').toBeGreaterThanOrEqual(6);
+    expect(
+      deliveryPackage.artifacts.every((artifact) => artifact.required && artifact.status === 'included'),
+      '天问二号样例项目的 #8 必需交付物必须全部从保存状态解析为 included',
+    ).toBe(true);
+
+    const sourceCodeArtifact = expectRequiredDeliveryArtifact(deliveryPackage.artifacts, {
+      id: 'tw2-source-code',
+      type: 'source-code',
+      path: /source[\\/]mbse-course-practice$/,
+      title: /源码|source/i,
+      source: /sample-projects[\\/]tianwen-2[\\/]project\.json$/,
+    });
+    const runnableAppArtifact = expectRequiredDeliveryArtifact(deliveryPackage.artifacts, {
+      id: 'tw2-runnable-tauri-app',
+      type: 'runnable-tauri-app',
+      path: /dist[\\/]tauri[\\/]mbse-course-practice$/,
+      title: /可运行 Tauri 应用|runnable/i,
+      source: /sample-projects[\\/]tianwen-2[\\/]project\.json$/,
+    });
+    const sampleProjectArtifact = expectRequiredDeliveryArtifact(deliveryPackage.artifacts, {
+      id: 'tw2-sample-project',
+      type: 'sample-project',
+      path: /sample-projects[\\/]tianwen-2$/,
+      title: /天问二号样例工程|sample/i,
+      source: /sample-projects[\\/]tianwen-2[\\/]project\.json$/,
+    });
+    const sysmlArtifact = expectRequiredDeliveryArtifact(deliveryPackage.artifacts, {
+      id: 'tw2-confirmed-sysml',
+      type: 'sysml-v2',
+      path: /sample-projects[\\/]tianwen-2[\\/]model[\\/]tianwen-2\.sysml$/,
+      title: /SysML v2|模型文本/,
+      source: /sample-projects[\\/]tianwen-2[\\/]model[\\/]tianwen-2\.sysml$/,
+    });
+    const viewModelArtifact = expectRequiredDeliveryArtifact(deliveryPackage.artifacts, {
+      id: 'tw2-confirmed-view-model',
+      type: 'json-view-model',
+      path: /sample-projects[\\/]tianwen-2[\\/]model[\\/]view-model\.json$/,
+      title: /JSON|视图模型/,
+      source: /sample-projects[\\/]tianwen-2[\\/]model[\\/]view-model\.json$/,
+    });
+    const validationArtifact = expectRequiredDeliveryArtifact(deliveryPackage.artifacts, {
+      id: 'tw2-validation-result',
+      type: 'validation-result',
+      path: /delivery[\\/]validation-result\.json$/,
+      title: /validation|校验/,
+      source: /sample-projects[\\/]tianwen-2[\\/]model[\\/]view-model\.json$/,
+    });
+    const viewReportArtifact = expectRequiredDeliveryArtifact(deliveryPackage.artifacts, {
+      id: 'tw2-key-views-report',
+      type: 'view-report',
+      path: /delivery[\\/]key-views-report\.md$/,
+      title: /关键视图|截图|报告素材/,
+      source: /sample-projects[\\/]tianwen-2[\\/]model[\\/]view-model\.json$/,
+    });
+    const courseReportArtifact = expectRequiredDeliveryArtifact(deliveryPackage.artifacts, {
+      id: 'tw2-course-report-material',
+      type: 'course-report-material',
+      path: /delivery[\\/]course-report-material\.md$/,
+      title: /课程报告素材|report/i,
+      source: /sample-projects[\\/]tianwen-2[\\/]model[\\/]view-model\.json$/,
+    });
+    const demoGuideArtifact = expectRequiredDeliveryArtifact(deliveryPackage.artifacts, {
+      id: 'tw2-demo-guide',
+      type: 'demo-guide',
+      path: /delivery[\\/]demo-guide\.md$/,
+      title: /演示说明|Demo Guide/,
+      source: /sample-projects[\\/]tianwen-2[\\/]project\.json$/,
+    });
+    const deliveryManifestArtifact = expectRequiredDeliveryArtifact(deliveryPackage.artifacts, {
+      id: 'tw2-delivery-manifest',
+      type: 'delivery-manifest',
+      path: /delivery[\\/]manifest\.json$/,
+      title: /交付清单|Delivery Manifest/,
+      source: /sample-projects[\\/]tianwen-2[\\/]project\.json$/,
+    });
+
+    expect(
+      deliveryPackage.artifacts.every((artifact) => !artifact.path.startsWith('memory://') && !artifact.source.startsWith('memory://')),
+      '导出清单不得把 memory:// 当前 UI 临时工件路径当作课程交付路径',
+    ).toBe(true);
+    const sourceCodeManifest = JSON.parse(sourceCodeArtifact.content) as JsonObject;
+    const sourceCodePaths = Array.isArray(sourceCodeManifest.includedPaths) ? sourceCodeManifest.includedPaths.map(String).join('\n') : '';
+    expect(sourceCodePaths, '完整课程交付包必须声明源码工程真实路径清单').toMatch(/package\.json[\s\S]*src\/[\s\S]*src-tauri\/[\s\S]*tests\//);
+    const runnableAppManifest = JSON.parse(runnableAppArtifact.content) as JsonObject;
+    expect(JSON.stringify(runnableAppManifest), '完整课程交付包必须声明可运行 Tauri 应用构建入口和产物路径').toMatch(/npm run tauri:build[\s\S]*Tauri[\s\S]*Agent Sidecar[\s\S]*src-tauri\/target\/release/);
+    expect(sampleProjectArtifact.content, '完整课程交付包必须包含天问二号样例工程文件清单').toMatch(/project\.json[\s\S]*source-material\.md[\s\S]*view-model\.json/);
+    expect(sysmlArtifact.content, 'SysML v2 交付物必须包含可提交的模型源文本').toMatch(/package\s+|requirement def|part def/i);
+
+    const parsedViewModel = JSON.parse(viewModelArtifact.content) as JsonObject;
+    const viewIds = recordArray(parsedViewModel.views).map((view) => String(view.id ?? `${view.title ?? ''}`));
+    expect(viewIds, 'JSON 视图模型交付物必须包含可复现的多视图数据').toEqual(
+      expect.arrayContaining(['requirements-view', 'bdd-structure-view', 'activity-flow-view', 'traceability-matrix-view', 'ibd-internal-block-view', 'parameter-constraints-view']),
+    );
+
+    const validationResult = JSON.parse(validationArtifact.content) as JsonObject;
+    expect(validationResult.valid, 'validation 结果必须保留确定性校验通过/失败状态').toBe(true);
+    expect(Array.isArray(validationResult.errors), 'validation 结果必须保留 errors 数组').toBe(true);
+    expect(Array.isArray(validationResult.findings), 'validation 结果必须保留 findings 数组').toBe(true);
+
+    expect(viewReportArtifact.content, '报告素材必须覆盖关键视图标题，供课程报告替代瞬时截图依赖').toMatch(
+      /需求视图[\s\S]*BDD 结构视图[\s\S]*IBD 内部块图[\s\S]*活动图[\s\S]*参数约束视图[\s\S]*需求追溯矩阵/,
+    );
+    expect(courseReportArtifact.content, '课程报告素材必须连接工程价值、关键视图和 validation 结果').toMatch(/工程价值[\s\S]*关键视图[\s\S]*validation[\s\S]*报告建议结构/);
+    expect(demoGuideArtifact.content, '演示说明必须覆盖课程演示主流程').toMatch(/材料导入[\s\S]*Agent Sidecar[\s\S]*多视图[\s\S]*静态校验[\s\S]*课程大实践/);
+
+    const deliveryManifest = JSON.parse(deliveryManifestArtifact.content) as JsonObject;
+    const checklist = recordArray(deliveryManifest.checklist);
+    expect(checklist.length, '交付清单必须包含 checklist，不能只列文件名').toBeGreaterThanOrEqual(10);
+    expect(
+      checklist.every((item) => item.status === 'included' && Array.isArray(item.artifactIds) && item.artifactIds.length > 0),
+      '交付清单 checklist 必须标明必需项均已包含，并关联对应 artifact',
+    ).toBe(true);
+
+    const appEntry = readRequiredTextFile(appEntryPath, 'App 前端入口');
+    expect(
+      appEntry,
+      'App 导出交付包必须读取 persistedProjectSnapshot，而不是直接从 generatedArtifacts 即时构造导出状态',
+    ).toMatch(/exportCourseDeliveryPackage\(persistedProjectSnapshot\)/);
+    expect(
+      appEntry,
+      'App 不得在 useMemo 中用 generatedArtifacts 派生导出快照；生成结果必须先显式保存进 persistedProjectSnapshot',
+    ).not.toMatch(/useMemo\([\s\S]*createPersistedWorkbenchProjectSnapshot\(sampleProject,\s*generatedArtifacts/);
+    expect(
+      appEntry,
+      '确认生成后必须把生成工件写入已保存项目快照，再供导出使用',
+    ).toMatch(/setPersistedProjectSnapshot\(createPersistedWorkbenchProjectSnapshot\(sampleProject,\s*(?:nextArtifacts|draftEvent\.draft)\)\)/);
+    expect(appEntry, '交付包 UI 必须展示 checklist 检查项，而不是只展示 artifact 文件列表').toMatch(/deliveryPackage\.checklist\.map/);
   });
 
   it('内置样例 JSON 视图模型同步包含参数约束视图', () => {

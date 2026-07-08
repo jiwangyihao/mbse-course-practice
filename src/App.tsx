@@ -50,6 +50,11 @@ import {
   type ModelGenerationResult,
 } from './domain/modelGeneration';
 import { loadBundledTianwen2Project } from './domain/sampleProject';
+import {
+  createPersistedWorkbenchProjectSnapshot,
+  exportCourseDeliveryPackage,
+  type CourseDeliveryPackage,
+} from './domain/courseDeliveryPackage';
 import { workbenchEntry } from './domain/workbench';
 import { createAgentSidecarClient } from './domain/agentSidecar';
 import type { AgentModelingSession, AgentSidecarEvent, AgentSidecarStatus } from './domain/agentSidecar';
@@ -141,6 +146,13 @@ export default function App() {
   const [agentSession, setAgentSession] = useState<AgentModelingSession | null>(null);
   const [isAgentBusy, setAgentBusy] = useState(false);
   const [agentError, setAgentError] = useState<string | null>(null);
+  const [persistedProjectSnapshot, setPersistedProjectSnapshot] = useState(() =>
+    createPersistedWorkbenchProjectSnapshot(sampleProject),
+  );
+  const courseDeliveryPackage = useMemo(
+    () => exportCourseDeliveryPackage(persistedProjectSnapshot),
+    [persistedProjectSnapshot],
+  );
 
   useEffect(() => {
     if (!hasTauriRuntime()) {
@@ -282,8 +294,10 @@ export default function App() {
 
   function confirmAndGenerate() {
     const nextConfirmedData = confirmedData ?? extractTianwen2ConfirmedData(sourceText);
+    const nextArtifacts = generateTianwen2ModelArtifacts(nextConfirmedData);
     setConfirmedData(nextConfirmedData);
-    setGeneratedArtifacts(generateTianwen2ModelArtifacts(nextConfirmedData));
+    setGeneratedArtifacts(nextArtifacts);
+    setPersistedProjectSnapshot(createPersistedWorkbenchProjectSnapshot(sampleProject, nextArtifacts));
     setImportOpen(false);
   }
 
@@ -293,6 +307,7 @@ export default function App() {
 
     if (draftEvent) {
       setGeneratedArtifacts(draftEvent.draft);
+      setPersistedProjectSnapshot(createPersistedWorkbenchProjectSnapshot(sampleProject, draftEvent.draft));
       setImportOpen(false);
       return;
     }
@@ -487,6 +502,8 @@ export default function App() {
                         />
                       </Card>
 
+                      <DeliveryPackageCard deliveryPackage={courseDeliveryPackage} />
+
                       <Card
                         className="workspace-card"
                         title="后续流程边界"
@@ -504,7 +521,7 @@ export default function App() {
                   </Col>
                 ) : (
                   <Col xs={24}>
-                    <GeneratedModelWorkspace artifacts={generatedArtifacts} />
+                    <GeneratedModelWorkspace artifacts={generatedArtifacts} deliveryPackage={courseDeliveryPackage} />
                   </Col>
                 )}
               </Row>
@@ -700,7 +717,7 @@ function AgentDraftReview({
   );
 }
 
-function GeneratedModelWorkspace({ artifacts }: { artifacts: ModelGenerationResult }) {
+function GeneratedModelWorkspace({ artifacts, deliveryPackage }: { artifacts: ModelGenerationResult; deliveryPackage: CourseDeliveryPackage }) {
   const requirementView = artifacts.viewModel.views.find((view) => view.kind === 'requirements');
   const bddView = artifacts.viewModel.views.find((view) => view.kind === 'bdd');
   const ibdView = artifacts.viewModel.views.find((view) => view.kind === 'ibd');
@@ -746,6 +763,8 @@ function GeneratedModelWorkspace({ artifacts }: { artifacts: ModelGenerationResu
         </Row>
       </Card>
 
+      <DeliveryPackageCard deliveryPackage={deliveryPackage} />
+
       <Row gutter={[16, 16]}>
         {requirementView ? (
           <Col xs={24} xl={12}>
@@ -779,6 +798,37 @@ function GeneratedModelWorkspace({ artifacts }: { artifacts: ModelGenerationResu
         ) : null}
       </Row>
     </Space>
+  );
+}
+
+function DeliveryPackageCard({ deliveryPackage }: { deliveryPackage: CourseDeliveryPackage }) {
+  const rows = [
+    ...deliveryPackage.checklist.map((item) => ({
+      id: item.id,
+      kind: '检查项',
+      label: `交付检查：${item.id}`,
+      path: `${item.status}: ${item.artifactIds.join('、')}`,
+    })),
+    ...deliveryPackage.artifacts.map((artifact) => ({
+      id: artifact.id,
+      kind: artifact.type,
+      label: artifact.title,
+      path: artifact.path,
+    })),
+  ];
+
+  return (
+    <Card
+      className="workspace-card"
+      title="课程交付包清单"
+      extra={<Tag color="success">{deliveryPackage.source}</Tag>}
+      aria-label="课程交付包清单"
+    >
+      <Paragraph>
+        导出只消费已保存项目状态，交付包包含源码工程、可运行 Tauri 应用、天问二号样例工程、模型工件、校验结果、报告素材、演示说明和交付清单。
+      </Paragraph>
+      <Table className="artifact-table" columns={artifactColumns} dataSource={rows} pagination={false} rowKey="id" size="small" />
+    </Card>
   );
 }
 
