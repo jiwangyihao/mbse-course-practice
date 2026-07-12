@@ -1,6 +1,7 @@
-import { extractTianwen2ConfirmedData, generateTianwen2ModelArtifacts, validateViewModel } from '../src/domain/modelGeneration';
+import { defaultTianwen2ConfirmedData, extractTianwen2ConfirmedData, generateTianwen2ModelArtifacts, validateViewModel } from '../src/domain/modelGeneration';
 
 const confirmedTianwen2Data = {
+  ...defaultTianwen2ConfirmedData,
   projectId: 'tianwen-2',
   packageName: 'Tianwen2ConfirmedModel',
   mission: '天问二号任务面向小行星取样返回和主带彗星探测。',
@@ -197,7 +198,7 @@ describe('天问二号确认数据领域模型生成契约', () => {
     const confirmedData = extractTianwen2ConfirmedData([
       '# 天问二号任务与需求材料',
       '',
-      '天问二号探测器样例项目用于课程大实践的 MBSE 建模工作台演示。',
+      '天问二号探测器样例项目用于 MBSE 建模工作台的内置建模输入。',
       '',
       '## 使命目标',
       '',

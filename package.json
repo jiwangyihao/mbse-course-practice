@@ -17,12 +17,17 @@
   },
   "dependencies": {
     "@ant-design/icons": "^6.3.2",
+    "@oh-my-pi/pi-coding-agent": "^16.3.15",
     "@tauri-apps/api": "^2.5.0",
     "@xyflow/react": "^12.8.2",
     "antd": "^6.5.0",
     "elkjs": "^0.10.0",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "sysml-v2-lsp": "^0.23.0",
+    "tree-sitter": "^0.21.1",
+    "tree-sitter-sysml": "^0.1.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.5.0",

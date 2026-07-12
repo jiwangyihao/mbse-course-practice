@@ -19,6 +19,19 @@ export interface ConfirmedActivity {
   requirementIds: string[];
   performedBy: string[];
 }
+export interface ConfirmedInterface {
+  id: string;
+  label: string;
+  kind: 'sample' | 'data' | 'power' | 'thermal' | 'control';
+  interfaceId: string;
+  sourceSubsystemId: string;
+  sourcePortId: string;
+  sourcePortLabel: string;
+  targetSubsystemId: string;
+  targetPortId: string;
+  targetPortLabel: string;
+  requirementIds: string[];
+}
 
 export interface ConfirmedTianwen2Data {
   projectId: string;
@@ -26,7 +39,11 @@ export interface ConfirmedTianwen2Data {
   mission: string;
   requirements: ConfirmedRequirement[];
   subsystems: ConfirmedSubsystem[];
-  activities?: ConfirmedActivity[];
+  activities: ConfirmedActivity[];
+  interfaces: ConfirmedInterface[];
+  constraints: ParameterConstraint[];
+  parameters: ConstraintParameter[];
+  bindings: ParameterBinding[];
 }
 
 export interface ViewPort {
@@ -73,7 +90,7 @@ export interface ViewConnection {
 export interface TraceabilityMatrixColumn {
   id: string;
   elementId: string;
-  kind: 'structure' | 'behavior';
+  kind: 'structure' | 'behavior' | 'interface' | 'constraint';
   label: string;
 }
 
@@ -96,6 +113,7 @@ export interface ParameterConstraint {
   label: string;
   expression: string;
   relatedElementIds: string[];
+  requirementIds: string[];
 }
 
 export interface ConstraintParameter {
@@ -136,7 +154,7 @@ export interface GeneratedView {
 export interface GeneratedViewModel {
   schemaVersion: string;
   projectId: string;
-  source: 'confirmed-import-data';
+  source: 'confirmed-import-data' | 'sdk-agent-generated';
   generatedFrom: string;
   views: GeneratedView[];
   validation: {
@@ -144,11 +162,26 @@ export interface GeneratedViewModel {
     checkedRules: string[];
   };
 }
+export interface AgentGenerationProvenance {
+  mode: 'sdk-agent';
+  provider: string;
+  model: string;
+  sdkSessionId: string;
+  completedAt: string;
+  schemaOverridden: boolean;
+  validationSummary: {
+    valid: boolean;
+    errorCount: number;
+    findingCount: number;
+  };
+}
+
 
 export interface ModelGenerationResult {
   sysmlText: string;
   viewModel: GeneratedViewModel;
   validation: ViewModelValidationResult;
+  provenance?: AgentGenerationProvenance;
 }
 
 export interface ViewModelValidationError {
@@ -243,6 +276,114 @@ const fallbackSubsystems: ConfirmedSubsystem[] = [
   { id: 'gnc', name: '制导导航与控制分系统', parentId: 'spacecraft-platform' },
 ];
 
+const fallbackInterfaces: ConfirmedInterface[] = [
+  {
+    id: 'connection-sample-transfer-to-platform',
+    label: '样品转移接口',
+    kind: 'sample',
+    interfaceId: 'sample-transfer',
+    sourceSubsystemId: 'sampling-return',
+    sourcePortId: 'sample-transfer-out',
+    sourcePortLabel: '样品转移与封装接口',
+    targetSubsystemId: 'spacecraft-platform',
+    targetPortId: 'sample-return-mechanical-interface',
+    targetPortLabel: '样品转移接口',
+    requirementIds: ['REQ-TW2-001'],
+  },
+  {
+    id: 'connection-sample-telemetry-to-ttc',
+    label: '采样遥测数据接口',
+    kind: 'data',
+    interfaceId: 'telemetry-data',
+    sourceSubsystemId: 'sampling-return',
+    sourcePortId: 'sample-telemetry-out',
+    sourcePortLabel: '采样遥测数据接口',
+    targetSubsystemId: 'ttc-communication',
+    targetPortId: 'data-bus-in',
+    targetPortLabel: '遥测数据接收接口',
+    requirementIds: ['REQ-TW2-003'],
+  },
+  {
+    id: 'connection-power-thermal-to-sampling',
+    label: '供电与热控接口',
+    kind: 'power',
+    interfaceId: 'power-thermal',
+    sourceSubsystemId: 'power-thermal',
+    sourcePortId: 'power-thermal-service',
+    sourcePortLabel: '供电与热控服务接口',
+    targetSubsystemId: 'sampling-return',
+    targetPortId: 'sample-power-thermal-in',
+    targetPortLabel: '采样供电与热控接口',
+    requirementIds: ['REQ-TW2-002'],
+  },
+  {
+    id: 'connection-gnc-data-to-ttc',
+    label: '姿态遥测数据接口',
+    kind: 'control',
+    interfaceId: 'telemetry-data',
+    sourceSubsystemId: 'gnc',
+    sourcePortId: 'attitude-control-data',
+    sourcePortLabel: '姿态控制数据接口',
+    targetSubsystemId: 'ttc-communication',
+    targetPortId: 'telemetry-downlink',
+    targetPortLabel: '测控通信下传接口',
+    requirementIds: ['REQ-TW2-002', 'REQ-TW2-003'],
+  },
+];
+
+const fallbackConstraints: ParameterConstraint[] = [
+  {
+    id: 'constraint-mass-budget',
+    label: '质量预算约束',
+    expression: 'spacecraft-dry-mass <= 1000 kg',
+    relatedElementIds: ['spacecraft-platform', 'sampling-return'],
+    requirementIds: ['REQ-TW2-001'],
+  },
+  {
+    id: 'constraint-power-budget',
+    label: '电源输出约束',
+    expression: 'solar-array-output >= 2000 W',
+    relatedElementIds: ['power-thermal', 'spacecraft-platform'],
+    requirementIds: ['REQ-TW2-002'],
+  },
+];
+
+const fallbackParameters: ConstraintParameter[] = [
+  {
+    id: 'spacecraft-dry-mass',
+    label: '探测器干质量',
+    unit: 'kg',
+    unitSymbol: 'kg',
+    relatedElementIds: ['spacecraft-platform', 'sampling-return'],
+  },
+  {
+    id: 'solar-array-output',
+    label: '太阳翼输出功率',
+    unit: 'W',
+    unitSymbol: 'W',
+    relatedElementIds: ['power-thermal', 'spacecraft-platform'],
+  },
+];
+
+const fallbackBindings: ParameterBinding[] = [
+  {
+    id: 'binding-mass-budget-dry-mass',
+    kind: 'binding',
+    constraintId: 'constraint-mass-budget',
+    parameterId: 'spacecraft-dry-mass',
+    label: '质量参数绑定',
+    relatedElementIds: ['spacecraft-platform', 'sampling-return'],
+  },
+  {
+    id: 'binding-power-budget-solar-array-output',
+    kind: 'binding',
+    constraintId: 'constraint-power-budget',
+    parameterId: 'solar-array-output',
+    label: '功率参数绑定',
+    relatedElementIds: ['power-thermal', 'spacecraft-platform'],
+  },
+];
+
 export const defaultTianwen2ConfirmedData: ConfirmedTianwen2Data = {
   projectId: 'tianwen-2',
   packageName: 'Tianwen2ConfirmedModel',
@@ -250,6 +391,10 @@ export const defaultTianwen2ConfirmedData: ConfirmedTianwen2Data = {
   requirements: fallbackRequirements,
   subsystems: fallbackSubsystems,
   activities: fallbackActivities,
+  interfaces: fallbackInterfaces,
+  constraints: fallbackConstraints,
+  parameters: fallbackParameters,
+  bindings: fallbackBindings,
 };
 
 export function extractTianwen2ConfirmedData(sourceText: string): ConfirmedTianwen2Data {
@@ -276,6 +421,11 @@ export function extractTianwen2ConfirmedData(sourceText: string): ConfirmedTianw
     mission: inferMission(sourceText),
     requirements: Array.from(requirementById.values()).sort((left, right) => left.id.localeCompare(right.id)),
     subsystems: fallbackSubsystems,
+    activities: fallbackActivities,
+    interfaces: fallbackInterfaces,
+    constraints: fallbackConstraints,
+    parameters: fallbackParameters,
+    bindings: fallbackBindings,
   };
 }
 
@@ -788,7 +938,7 @@ function validateParameterConstraintView(
 
 function buildViewModel(confirmedData: ConfirmedTianwen2Data): GeneratedViewModel {
   const subsystemByName = new Map(confirmedData.subsystems.map((subsystem) => [subsystem.name, subsystem]));
-  const activities = confirmedData.activities ?? fallbackActivities;
+  const activities = confirmedData.activities;
   const subsystemById = new Map(confirmedData.subsystems.map((subsystem) => [subsystem.id, subsystem]));
   const tracedSubsystems = new Map<string, ConfirmedSubsystem>();
 
@@ -865,9 +1015,8 @@ function buildViewModel(confirmedData: ConfirmedTianwen2Data): GeneratedViewMode
       label: '组成',
     }));
 
-
-  const ibdPorts = buildIbdPorts(confirmedData.subsystems);
-  const ibdConnections = buildIbdConnections(confirmedData.subsystems);
+  const ibdPorts = buildIbdPorts(confirmedData.interfaces);
+  const ibdConnections = buildIbdConnections(confirmedData.interfaces);
   const ibdEdges = ibdConnections.map(connectionToEdge);
   const activityNodes: ViewNode[] = activities.map((activity, index) => ({
     id: activity.id,
@@ -906,6 +1055,20 @@ function buildViewModel(confirmedData: ConfirmedTianwen2Data): GeneratedViewMode
     label: activity.title,
   }));
 
+  const interfaceColumns: TraceabilityMatrixColumn[] = confirmedData.interfaces.map((entry) => ({
+    id: entry.id,
+    elementId: entry.id,
+    kind: 'interface',
+    label: entry.label,
+  }));
+
+  const constraintColumns: TraceabilityMatrixColumn[] = confirmedData.constraints.map((constraint) => ({
+    id: constraint.id,
+    elementId: constraint.id,
+    kind: 'constraint',
+    label: constraint.label,
+  }));
+
   const structureCells: TraceabilityMatrixCell[] = confirmedData.requirements.flatMap((requirement) =>
     confirmedData.subsystems.map((subsystem) => {
       const covered = requirement.tracedTo.includes(subsystem.name);
@@ -935,7 +1098,29 @@ function buildViewModel(confirmedData: ConfirmedTianwen2Data): GeneratedViewMode
     }),
   );
 
-  const parameterConstraintView = buildParameterConstraintView(confirmedData.subsystems);
+  const interfaceCells: TraceabilityMatrixCell[] = confirmedData.requirements.flatMap((requirement) =>
+    confirmedData.interfaces.map((entry) => ({
+      rowId: requirement.id,
+      requirementId: requirement.id,
+      columnId: entry.id,
+      covered: entry.requirementIds.includes(requirement.id),
+      evidence: entry.requirementIds.includes(requirement.id)
+        ? `${entry.label} 覆盖 ${requirement.id}：${entry.sourcePortLabel} -> ${entry.targetPortLabel}`
+        : undefined,
+    })),
+  );
+
+  const constraintCells: TraceabilityMatrixCell[] = confirmedData.requirements.flatMap((requirement) =>
+    confirmedData.constraints.map((constraint) => ({
+      rowId: requirement.id,
+      requirementId: requirement.id,
+      columnId: constraint.id,
+      covered: constraint.requirementIds.includes(requirement.id),
+      evidence: constraint.requirementIds.includes(requirement.id) ? `${constraint.label} 约束 ${requirement.id}` : undefined,
+    })),
+  );
+
+  const parameterConstraintView = buildParameterConstraintView(confirmedData);
 
   return {
     schemaVersion: '0.4.0',
@@ -995,8 +1180,8 @@ function buildViewModel(confirmedData: ConfirmedTianwen2Data): GeneratedViewMode
         nodes: [],
         edges: [],
         rows: matrixRows,
-        columns: [...structureColumns, ...behaviorColumns],
-        cells: [...structureCells, ...behaviorCells],
+        columns: [...structureColumns, ...behaviorColumns, ...interfaceColumns, ...constraintColumns],
+        cells: [...structureCells, ...behaviorCells, ...interfaceCells, ...constraintCells],
       },
     ],
     validation: {
@@ -1006,62 +1191,10 @@ function buildViewModel(confirmedData: ConfirmedTianwen2Data): GeneratedViewMode
   };
 }
 
-function buildParameterConstraintView(subsystems: ConfirmedSubsystem[]): GeneratedView {
-  const findSubsystem = (patterns: RegExp[]) =>
-    subsystems.find((subsystem) => patterns.some((pattern) => pattern.test(`${subsystem.id} ${subsystem.name}`))) ?? subsystems[0];
-  const spacecraft = findSubsystem([/spacecraft-platform|航天器平台/i]);
-  const sampling = findSubsystem([/sampling-return|采样|取样/i]);
-  const powerThermal = findSubsystem([/power-thermal|电源|热控/i]);
-  const massRelatedElementIds = [spacecraft?.id, sampling?.id].filter((id): id is string => Boolean(id));
-  const powerRelatedElementIds = [powerThermal?.id, spacecraft?.id].filter((id): id is string => Boolean(id));
-  const constraints: ParameterConstraint[] = [
-    {
-      id: 'constraint-mass-budget',
-      label: '质量预算约束',
-      expression: 'spacecraft-dry-mass <= 1000 kg',
-      relatedElementIds: massRelatedElementIds,
-    },
-    {
-      id: 'constraint-power-budget',
-      label: '电源输出约束',
-      expression: 'solar-array-output >= 2000 W',
-      relatedElementIds: powerRelatedElementIds,
-    },
-  ];
-  const parameters: ConstraintParameter[] = [
-    {
-      id: 'spacecraft-dry-mass',
-      label: '探测器干质量',
-      unit: 'kg',
-      unitSymbol: 'kg',
-      relatedElementIds: massRelatedElementIds,
-    },
-    {
-      id: 'solar-array-output',
-      label: '太阳翼输出功率',
-      unit: 'W',
-      unitSymbol: 'W',
-      relatedElementIds: powerRelatedElementIds,
-    },
-  ];
-  const bindings: ParameterBinding[] = [
-    {
-      id: 'binding-mass-budget-dry-mass',
-      kind: 'binding',
-      constraintId: 'constraint-mass-budget',
-      parameterId: 'spacecraft-dry-mass',
-      label: '质量参数绑定',
-      relatedElementIds: massRelatedElementIds,
-    },
-    {
-      id: 'binding-power-budget-solar-array-output',
-      kind: 'binding',
-      constraintId: 'constraint-power-budget',
-      parameterId: 'solar-array-output',
-      label: '功率参数绑定',
-      relatedElementIds: powerRelatedElementIds,
-    },
-  ];
+function buildParameterConstraintView(confirmedData: ConfirmedTianwen2Data): GeneratedView {
+  const constraints = confirmedData.constraints;
+  const parameters = confirmedData.parameters;
+  const bindings = confirmedData.bindings;
   const constraintNodes: ViewNode[] = constraints.map((constraint, index) => ({
     id: constraint.id,
     kind: 'constraint',
@@ -1102,7 +1235,7 @@ function buildParameterConstraintView(subsystems: ConfirmedSubsystem[]): Generat
 
 function buildSysmlText(confirmedData: ConfirmedTianwen2Data): string {
   const subsystemByName = new Map(confirmedData.subsystems.map((subsystem) => [subsystem.name, subsystem]));
-  const activities = confirmedData.activities ?? fallbackActivities;
+  const activities = confirmedData.activities;
   const subsystemById = new Map(confirmedData.subsystems.map((subsystem) => [subsystem.id, subsystem]));
   const lines = [
     `package ${confirmedData.packageName} {`,
@@ -1122,13 +1255,22 @@ function buildSysmlText(confirmedData: ConfirmedTianwen2Data): string {
     lines.push('  }');
     lines.push('');
   }
-  for (const interfaceId of Array.from(new Set(buildIbdPorts(confirmedData.subsystems).map((port) => port.interfaceId)))) {
+
+  for (const interfaceId of Array.from(new Set(confirmedData.interfaces.map((entry) => entry.interfaceId)))) {
+    const representatives = confirmedData.interfaces.filter((entry) => entry.interfaceId === interfaceId);
     lines.push(`  interface def ${toSysmlIdentifier(interfaceId)} {`);
     lines.push(`    doc /* IBD 端口接口 ${interfaceId}，用于端口连接静态校验。 */`);
+    lines.push(`    doc /* 关联连接：${representatives.map((entry) => entry.label).join('、')}。 */`);
     lines.push('  }');
     lines.push('');
   }
 
+  const portsBySubsystem = new Map<string, ViewPort[]>();
+  for (const port of buildIbdPorts(confirmedData.interfaces)) {
+    const existing = portsBySubsystem.get(port.ownerId) ?? [];
+    existing.push(port);
+    portsBySubsystem.set(port.ownerId, existing);
+  }
 
   for (const subsystem of confirmedData.subsystems) {
     lines.push(`  part def ${toSysmlIdentifier(subsystem.id)} {`);
@@ -1136,7 +1278,7 @@ function buildSysmlText(confirmedData: ConfirmedTianwen2Data): string {
     if (subsystem.parentId) {
       lines.push(`    doc /* composition parent ${subsystem.parentId}。 */`);
     }
-    for (const port of buildPortsForSubsystem(subsystem.id)) {
+    for (const port of portsBySubsystem.get(subsystem.id) ?? []) {
       lines.push(`    port ${toSysmlIdentifier(port.id)} : ${toSysmlIdentifier(port.interfaceId)};`);
       lines.push(`    doc /* port ${port.id}：${port.label}，interface ${port.interfaceId}。 */`);
     }
@@ -1144,7 +1286,7 @@ function buildSysmlText(confirmedData: ConfirmedTianwen2Data): string {
     lines.push('');
   }
 
-  for (const connection of buildIbdConnections(confirmedData.subsystems)) {
+  for (const connection of buildIbdConnections(confirmedData.interfaces)) {
     lines.push(`  connection def ${toSysmlIdentifier(connection.id)} {`);
     lines.push(`    end source : ${toSysmlIdentifier(connection.source)}::${toSysmlIdentifier(connection.sourcePort)};`);
     lines.push(`    end target : ${toSysmlIdentifier(connection.target)}::${toSysmlIdentifier(connection.targetPort)};`);
@@ -1174,6 +1316,28 @@ function buildSysmlText(confirmedData: ConfirmedTianwen2Data): string {
     lines.push('');
   }
 
+  for (const constraint of confirmedData.constraints) {
+    lines.push(`  constraint def ${toSysmlIdentifier(constraint.id)} {`);
+    lines.push(`    doc /* ${constraint.label}：${constraint.expression}。 */`);
+    lines.push(`    doc /* cover ${constraint.requirementIds.join('、')}。 */`);
+    lines.push('  }');
+    lines.push('');
+  }
+
+  for (const parameter of confirmedData.parameters) {
+    lines.push(`  attribute def ${toSysmlIdentifier(parameter.id)} {`);
+    lines.push(`    doc /* ${parameter.label}，单位 ${parameter.unitSymbol || parameter.unit}。 */`);
+    lines.push('  }');
+    lines.push('');
+  }
+
+  for (const binding of confirmedData.bindings) {
+    lines.push(`  binding def ${toSysmlIdentifier(binding.id)} {`);
+    lines.push(`    doc /* ${binding.label}：${binding.constraintId} -> ${binding.parameterId}。 */`);
+    lines.push('  }');
+    lines.push('');
+  }
+
   for (const requirement of confirmedData.requirements) {
     for (const subsystemName of requirement.tracedTo) {
       const subsystem = subsystemByName.get(subsystemName);
@@ -1194,80 +1358,39 @@ function buildSysmlText(confirmedData: ConfirmedTianwen2Data): string {
   return lines.join('\n');
 }
 
-function buildIbdPorts(subsystems: ConfirmedSubsystem[]): ViewPort[] {
-  const subsystemIds = new Set(subsystems.map((subsystem) => subsystem.id));
-  return subsystems.flatMap((subsystem) => buildPortsForSubsystem(subsystem.id)).filter((port) => subsystemIds.has(port.ownerId));
+function buildIbdPorts(interfaces: ConfirmedInterface[]): ViewPort[] {
+  const portsByScopedId = new Map<string, ViewPort>();
+
+  for (const entry of interfaces) {
+    portsByScopedId.set(`${entry.sourceSubsystemId}:${entry.sourcePortId}`, {
+      id: entry.sourcePortId,
+      label: entry.sourcePortLabel,
+      kind: entry.kind,
+      ownerId: entry.sourceSubsystemId,
+      interfaceId: entry.interfaceId,
+    });
+    portsByScopedId.set(`${entry.targetSubsystemId}:${entry.targetPortId}`, {
+      id: entry.targetPortId,
+      label: entry.targetPortLabel,
+      kind: entry.kind,
+      ownerId: entry.targetSubsystemId,
+      interfaceId: entry.interfaceId,
+    });
+  }
+
+  return Array.from(portsByScopedId.values());
 }
 
-function buildPortsForSubsystem(subsystemId: string): ViewPort[] {
-  const portsBySubsystem: Record<string, ViewPort[]> = {
-    'spacecraft-platform': [
-      { id: 'sample-return-mechanical-interface', label: '样品转移接口', kind: 'sample', ownerId: 'spacecraft-platform', interfaceId: 'sample-transfer' },
-      { id: 'platform-power-thermal-bus', label: '平台供电与热控接口', kind: 'power', ownerId: 'spacecraft-platform', interfaceId: 'power-thermal' },
-    ],
-    'sampling-return': [
-      { id: 'sample-transfer-out', label: '样品转移与封装接口', kind: 'sample', ownerId: 'sampling-return', interfaceId: 'sample-transfer' },
-      { id: 'sample-telemetry-out', label: '采样遥测数据接口', kind: 'data', ownerId: 'sampling-return', interfaceId: 'telemetry-data' },
-      { id: 'sample-power-thermal-in', label: '采样供电与热控接口', kind: 'power', ownerId: 'sampling-return', interfaceId: 'power-thermal' },
-    ],
-    'ttc-communication': [
-      { id: 'data-bus-in', label: '遥测数据接收接口', kind: 'data', ownerId: 'ttc-communication', interfaceId: 'telemetry-data' },
-      { id: 'telemetry-downlink', label: '测控通信下传接口', kind: 'data', ownerId: 'ttc-communication', interfaceId: 'telemetry-data' },
-    ],
-    'power-thermal': [
-      { id: 'power-thermal-service', label: '供电与热控服务接口', kind: 'power', ownerId: 'power-thermal', interfaceId: 'power-thermal' },
-      { id: 'thermal-control', label: '热控接口', kind: 'thermal', ownerId: 'power-thermal', interfaceId: 'power-thermal' },
-    ],
-    gnc: [
-      { id: 'attitude-control-data', label: '姿态控制数据接口', kind: 'control', ownerId: 'gnc', interfaceId: 'telemetry-data' },
-    ],
-  };
-
-  return portsBySubsystem[subsystemId] ?? [];
-}
-
-function buildIbdConnections(subsystems: ConfirmedSubsystem[]): ViewConnection[] {
-  const subsystemIds = new Set(subsystems.map((subsystem) => subsystem.id));
-  const connections: ViewConnection[] = [
-    {
-      id: 'connection-sample-transfer-to-platform',
-      kind: 'connection',
-      source: 'sampling-return',
-      target: 'spacecraft-platform',
-      sourcePort: 'sample-transfer-out',
-      targetPort: 'sample-return-mechanical-interface',
-      label: '样品转移连接',
-    },
-    {
-      id: 'connection-sample-telemetry-to-ttc',
-      kind: 'connection',
-      source: 'sampling-return',
-      target: 'ttc-communication',
-      sourcePort: 'sample-telemetry-out',
-      targetPort: 'data-bus-in',
-      label: '采样遥测数据连接',
-    },
-    {
-      id: 'connection-power-thermal-to-sampling',
-      kind: 'connection',
-      source: 'power-thermal',
-      target: 'sampling-return',
-      sourcePort: 'power-thermal-service',
-      targetPort: 'sample-power-thermal-in',
-      label: '供电与热控连接',
-    },
-    {
-      id: 'connection-gnc-data-to-ttc',
-      kind: 'connection',
-      source: 'gnc',
-      target: 'ttc-communication',
-      sourcePort: 'attitude-control-data',
-      targetPort: 'telemetry-downlink',
-      label: '姿态遥测数据连接',
-    },
-  ];
-
-  return connections.filter((connection) => subsystemIds.has(connection.source) && subsystemIds.has(connection.target));
+function buildIbdConnections(interfaces: ConfirmedInterface[]): ViewConnection[] {
+  return interfaces.map((entry) => ({
+    id: entry.id,
+    kind: 'connection',
+    source: entry.sourceSubsystemId,
+    target: entry.targetSubsystemId,
+    sourcePort: entry.sourcePortId,
+    targetPort: entry.targetPortId,
+    label: entry.label,
+  }));
 }
 
 function connectionToEdge(connection: ViewConnection): ViewEdge {

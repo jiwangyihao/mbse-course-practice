@@ -1,5 +1,6 @@
 [package]
 name = "mbse-course-practice"
+default-run = "mbse-course-practice"
 version = "0.1.0"
 description = "MBSE 建模工作台课程大实践"
 authors = ["jiwangyihao"]

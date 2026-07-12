@@ -1,5 +1,5 @@
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
-import type { ConfirmedTianwen2Data, ModelGenerationResult } from './modelGeneration';
+import { validateViewModel, type ConfirmedTianwen2Data, type ModelGenerationResult } from './modelGeneration';
 
 export type AgentSidecarState = 'stopped' | 'starting' | 'running' | 'error';
 
@@ -41,6 +41,9 @@ export type AgentSidecarEvent =
 
 export interface AgentModelingSession {
   sessionId: string;
+  provider?: string;
+  model?: string;
+  completedAt?: string;
   events: AgentSidecarEvent[];
 }
 
@@ -50,8 +53,9 @@ export interface AgentSidecarClient {
   start(): Promise<AgentSidecarStatus>;
   stop(): Promise<AgentSidecarStatus>;
   status(): Promise<AgentSidecarStatus>;
+  preflight(): Promise<AgentSidecarStatus>;
   extractCandidates(sourceText: string): Promise<AgentModelingSession>;
-  generateDraft(sourceText: string, confirmedData?: ConfirmedTianwen2Data): Promise<AgentModelingSession>;
+  generateDraft(sourceText: string, confirmedData: ConfirmedTianwen2Data): Promise<AgentModelingSession>;
 }
 
 export function createAgentSidecarClient({ invoke = tauriInvoke }: { invoke?: TauriInvoke } = {}): AgentSidecarClient {
@@ -59,11 +63,29 @@ export function createAgentSidecarClient({ invoke = tauriInvoke }: { invoke?: Ta
     start: () => invoke<AgentSidecarStatus>('start_agent_sidecar'),
     stop: () => invoke<AgentSidecarStatus>('stop_agent_sidecar'),
     status: () => invoke<AgentSidecarStatus>('agent_sidecar_status'),
-    extractCandidates: (sourceText) => invoke<AgentModelingSession>('extract_agent_candidates', { sourceText }),
-    generateDraft: (sourceText, confirmedData) =>
-      invoke<AgentModelingSession>('generate_agent_model_draft', {
-        sourceText,
-        ...(confirmedData ? { confirmedData } : {}),
-      }),
+    preflight: () => invoke<AgentSidecarStatus>('preflight_agent_sidecar'),
+    extractCandidates: async (sourceText) =>
+      normalizeAgentModelingSession(await invoke<AgentModelingSession>('extract_agent_candidates', { sourceText })),
+    generateDraft: async (sourceText, confirmedData) =>
+      normalizeAgentModelingSession(
+        await invoke<AgentModelingSession>('generate_agent_model_draft', { sourceText, confirmedData }),
+      ),
+  };
+}
+
+function normalizeAgentModelingSession(session: AgentModelingSession): AgentModelingSession {
+  return {
+    ...session,
+    events: session.events.map((event) =>
+      event.type === 'model-draft'
+        ? {
+            ...event,
+            draft: {
+              ...event.draft,
+              validation: validateViewModel(event.draft.viewModel),
+            },
+          }
+        : event,
+    ),
   };
 }

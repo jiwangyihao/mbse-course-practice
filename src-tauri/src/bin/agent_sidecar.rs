@@ -1,3 +1,4 @@
 fn main() {
-    mbse_course_practice_lib::agent_sidecar::run_agent_sidecar_process();
+    eprintln!("Legacy Rust agent_sidecar binary is disabled. Configure the SDK sidecar launcher instead.");
+    std::process::exit(1);
 }

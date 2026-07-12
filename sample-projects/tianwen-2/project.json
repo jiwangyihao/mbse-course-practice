@@ -1,10 +1,9 @@
 {
   "id": "tianwen-2",
   "name": "天问二号探测器样例项目",
-  "caseName": "天问二号探测器案例",
-  "course": "《基于模型的系统工程》课程大实践",
+  "caseName": "天问二号探测器",
   "productBoundary": "MBSE 建模工作台",
-  "workspaceBoundary": "独立大实践工作区；不属于前 12 个小实验工作区",
+  "workspaceBoundary": "独立工作区；不属于其他练习目录",
   "description": "用于验证材料导入、确认向导、模型文本生成、JSON 视图数据、需求图、结构图与静态校验的内置样例项目。",
   "sourceMaterials": [
     {

@@ -1,13 +1,13 @@
 use std::{
     env,
-    io::{self, BufRead, BufReader, BufWriter, Write},
+    io::{BufRead, BufReader, BufWriter, Write},
     path::PathBuf,
     process::{Child, ChildStdin, ChildStdout, Command, Stdio},
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
@@ -23,19 +23,56 @@ pub struct AgentSidecarStatus {
 struct SidecarLauncher {
     executable: PathBuf,
     args: Vec<String>,
+    resolution_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SidecarPreflightStatus {
+    provider: String,
+    model: String,
+    sdk_session_id: String,
+    completed_at: String,
+    fallback_message: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct SidecarRuntimeInfo {
+    provider: String,
+    model: String,
+    sdk_session_id: String,
+    completed_at: String,
+    fallback_message: Option<String>,
+}
+
+impl From<SidecarPreflightStatus> for SidecarRuntimeInfo {
+    fn from(value: SidecarPreflightStatus) -> Self {
+        Self {
+            provider: value.provider,
+            model: value.model,
+            sdk_session_id: value.sdk_session_id,
+            completed_at: value.completed_at,
+            fallback_message: value.fallback_message,
+        }
+    }
 }
 
 pub struct AgentSidecarRegistry {
     launcher: SidecarLauncher,
-    sidecar: Mutex<Option<LocalAgentSidecar>>,
+    sidecar: Mutex<Option<Arc<LocalAgentSidecar>>>,
 }
 
 impl AgentSidecarRegistry {
     pub fn with_executable(executable: PathBuf) -> Self {
+        Self::with_launcher(executable, Vec::new())
+    }
+
+    pub fn with_launcher(executable: PathBuf, args: Vec<String>) -> Self {
         Self {
             launcher: SidecarLauncher {
                 executable,
-                args: Vec::new(),
+                args,
+                resolution_error: None,
             },
             sidecar: Mutex::new(None),
         }
@@ -47,14 +84,14 @@ impl AgentSidecarRegistry {
             .lock()
             .map_err(|_| "Agent Sidecar 状态锁已损坏。".to_string())?;
 
-        if let Some(sidecar) = sidecar_slot.as_mut() {
+        if let Some(sidecar) = sidecar_slot.as_ref() {
             if sidecar.is_running()? {
-                return Ok(sidecar.status());
+                return sidecar.status();
             }
         }
 
-        let sidecar = LocalAgentSidecar::start(&self.launcher)?;
-        let status = sidecar.status();
+        let sidecar = Arc::new(LocalAgentSidecar::start(&self.launcher)?);
+        let status = sidecar.status()?;
         *sidecar_slot = Some(sidecar);
         Ok(status)
     }
@@ -65,7 +102,7 @@ impl AgentSidecarRegistry {
             .lock()
             .map_err(|_| "Agent Sidecar 状态锁已损坏。".to_string())?;
 
-        if let Some(mut sidecar) = sidecar_slot.take() {
+        if let Some(sidecar) = sidecar_slot.take() {
             sidecar.shutdown();
         }
 
@@ -78,9 +115,9 @@ impl AgentSidecarRegistry {
             .lock()
             .map_err(|_| "Agent Sidecar 状态锁已损坏。".to_string())?;
 
-        if let Some(sidecar) = sidecar_slot.as_mut() {
+        if let Some(sidecar) = sidecar_slot.as_ref() {
             if sidecar.is_running()? {
-                return Ok(sidecar.status());
+                return sidecar.status();
             }
 
             *sidecar_slot = None;
@@ -90,25 +127,21 @@ impl AgentSidecarRegistry {
         Ok(stopped_status("Agent Sidecar 未启动。"))
     }
 
+    pub fn preflight(&self) -> Result<AgentSidecarStatus, String> {
+        let sidecar = self.ensure_running_sidecar()?;
+        sidecar.status()
+    }
+
     pub fn extract_candidates(&self, source_text: &str) -> Result<Value, String> {
-        let mut sidecar_slot = self
-            .sidecar
-            .lock()
-            .map_err(|_| "Agent Sidecar 状态锁已损坏。".to_string())?;
+        self.extract_candidates_with_progress(source_text, |_| {})
+    }
 
-        let needs_start = match sidecar_slot.as_mut() {
-            Some(sidecar) => !sidecar.is_running()?,
-            None => true,
-        };
-
-        if needs_start {
-            *sidecar_slot = Some(LocalAgentSidecar::start(&self.launcher)?);
-        }
-
-        sidecar_slot
-            .as_mut()
-            .ok_or_else(|| "Agent Sidecar 启动失败。".to_string())?
-            .extract_candidates(source_text)
+    pub fn extract_candidates_with_progress<F>(&self, source_text: &str, on_event: F) -> Result<Value, String>
+    where
+        F: FnMut(&Value),
+    {
+        let sidecar = self.ensure_running_sidecar()?;
+        sidecar.extract_candidates_with_progress(source_text, on_event)
     }
 
     pub fn generate_model_draft(
@@ -116,24 +149,41 @@ impl AgentSidecarRegistry {
         source_text: &str,
         confirmed_data: Option<Value>,
     ) -> Result<Value, String> {
+        self.generate_model_draft_with_progress(source_text, confirmed_data, |_| {})
+    }
+
+    pub fn generate_model_draft_with_progress<F>(
+        &self,
+        source_text: &str,
+        confirmed_data: Option<Value>,
+        on_event: F,
+    ) -> Result<Value, String>
+    where
+        F: FnMut(&Value),
+    {
+        let sidecar = self.ensure_running_sidecar()?;
+        sidecar.generate_model_draft_with_progress(source_text, confirmed_data.as_ref(), on_event)
+    }
+
+    fn ensure_running_sidecar(&self) -> Result<Arc<LocalAgentSidecar>, String> {
         let mut sidecar_slot = self
             .sidecar
             .lock()
             .map_err(|_| "Agent Sidecar 状态锁已损坏。".to_string())?;
 
-        let needs_start = match sidecar_slot.as_mut() {
+        let needs_start = match sidecar_slot.as_ref() {
             Some(sidecar) => !sidecar.is_running()?,
             None => true,
         };
 
         if needs_start {
-            *sidecar_slot = Some(LocalAgentSidecar::start(&self.launcher)?);
+            *sidecar_slot = Some(Arc::new(LocalAgentSidecar::start(&self.launcher)?));
         }
 
         sidecar_slot
-            .as_mut()
-            .ok_or_else(|| "Agent Sidecar 启动失败。".to_string())?
-            .generate_model_draft(source_text, confirmed_data.as_ref())
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| "Agent Sidecar 启动失败。".to_string())
     }
 }
 
@@ -149,27 +199,36 @@ impl Default for AgentSidecarRegistry {
 impl Drop for AgentSidecarRegistry {
     fn drop(&mut self) {
         if let Ok(mut sidecar_slot) = self.sidecar.lock() {
-            if let Some(mut sidecar) = sidecar_slot.take() {
+            if let Some(sidecar) = sidecar_slot.take() {
                 sidecar.shutdown();
             }
         }
     }
 }
 
-struct LocalAgentSidecar {
-    child: Child,
+struct SidecarIo {
     stdin: BufWriter<ChildStdin>,
     stdout: BufReader<ChildStdout>,
+}
+
+struct LocalAgentSidecar {
+    child: Mutex<Child>,
+    io: Mutex<SidecarIo>,
     runtime_id: String,
+    runtime_info: Mutex<SidecarRuntimeInfo>,
 }
 
 impl LocalAgentSidecar {
     fn start(launcher: &SidecarLauncher) -> Result<Self, String> {
+        if let Some(error) = launcher.resolution_error.as_ref() {
+            return Err(error.clone());
+        }
+
         let mut child = Command::new(&launcher.executable)
             .args(&launcher.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::inherit())
             .spawn()
             .map_err(|error| format!("启动 Agent Sidecar 可执行文件失败：{error}"))?;
 
@@ -182,38 +241,88 @@ impl LocalAgentSidecar {
             .take()
             .ok_or_else(|| "Agent Sidecar stdout 管道不可用。".to_string())?;
 
-        Ok(Self {
-            child,
-            stdin: BufWriter::new(stdin),
-            stdout: BufReader::new(stdout),
+        let sidecar = Self {
+            child: Mutex::new(child),
+            io: Mutex::new(SidecarIo {
+                stdin: BufWriter::new(stdin),
+                stdout: BufReader::new(stdout),
+            }),
             runtime_id: format!("sidecar-process-{}", now_millis()),
-        })
+            runtime_info: Mutex::new(SidecarRuntimeInfo {
+                provider: "unknown-provider".to_string(),
+                model: "unknown-model".to_string(),
+                sdk_session_id: "unknown-session".to_string(),
+                completed_at: String::new(),
+                fallback_message: None,
+            }),
+        };
+
+        match sidecar.preflight() {
+            Ok(info) => {
+                *sidecar
+                    .runtime_info
+                    .lock()
+                    .map_err(|_| "Agent Sidecar 运行时信息锁已损坏。".to_string())? = info;
+                Ok(sidecar)
+            }
+            Err(error) => {
+                sidecar.shutdown();
+                Err(error)
+            }
+        }
     }
 
-    fn is_running(&mut self) -> Result<bool, String> {
-        Ok(self
+    fn preflight(&self) -> Result<SidecarRuntimeInfo, String> {
+        let response = self.request(json!({ "action": "preflight" }), |_| {})?;
+        let status = response
+            .get("status")
+            .cloned()
+            .ok_or_else(|| "Agent Sidecar 预检响应缺少 status。".to_string())?;
+        let parsed: SidecarPreflightStatus = serde_json::from_value(status)
+            .map_err(|error| format!("解析 Agent Sidecar 预检状态失败：{error}"))?;
+        Ok(parsed.into())
+    }
+
+    fn is_running(&self) -> Result<bool, String> {
+        let mut child = self
             .child
+            .lock()
+            .map_err(|_| "Agent Sidecar 子进程锁已损坏。".to_string())?;
+        Ok(child
             .try_wait()
             .map_err(|error| format!("检查 Agent Sidecar 进程失败：{error}"))?
             .is_none())
     }
 
-    fn status(&self) -> AgentSidecarStatus {
-        AgentSidecarStatus {
+    fn status(&self) -> Result<AgentSidecarStatus, String> {
+        let child = self
+            .child
+            .lock()
+            .map_err(|_| "Agent Sidecar 子进程锁已损坏。".to_string())?;
+        let runtime_info = self
+            .runtime_info
+            .lock()
+            .map_err(|_| "Agent Sidecar 运行时信息锁已损坏。".to_string())?
+            .clone();
+        Ok(AgentSidecarStatus {
             state: "running",
-            pid: Some(self.child.id()),
+            pid: Some(child.id()),
             endpoint: Some(format!("local://agent-sidecar/{}", self.runtime_id)),
-            message: Some(
-                "Agent Sidecar 子进程已由 Tauri 托管，结构化事件由 Sidecar 协议返回。".to_string(),
-            ),
-        }
+            message: Some(runtime_status_message(&runtime_info)),
+        })
     }
 
-    fn extract_candidates(&mut self, source_text: &str) -> Result<Value, String> {
-        let response = self.request(json!({
-            "action": "extract-candidates",
-            "sourceText": source_text
-        }))?;
+    fn extract_candidates_with_progress<F>(&self, source_text: &str, on_event: F) -> Result<Value, String>
+    where
+        F: FnMut(&Value),
+    {
+        let response = self.request(
+            json!({
+                "action": "extract-candidates",
+                "sourceText": source_text
+            }),
+            on_event,
+        )?;
 
         response
             .get("session")
@@ -221,16 +330,26 @@ impl LocalAgentSidecar {
             .ok_or_else(|| "Agent Sidecar 响应缺少 session。".to_string())
     }
 
-    fn generate_model_draft(
-        &mut self,
+    fn generate_model_draft_with_progress<F>(
+        &self,
         source_text: &str,
         confirmed_data: Option<&Value>,
-    ) -> Result<Value, String> {
-        let response = self.request(json!({
-            "action": "generate-model-draft",
-            "sourceText": source_text,
-            "confirmedData": confirmed_data
-        }))?;
+        on_event: F,
+    ) -> Result<Value, String>
+    where
+        F: FnMut(&Value),
+    {
+        let confirmed_data = confirmed_data.ok_or_else(|| {
+            "generate-model-draft 缺少 confirmedData；已禁用任何本地补齐或确定性回退路径。".to_string()
+        })?;
+        let response = self.request(
+            json!({
+                "action": "generate-model-draft",
+                "sourceText": source_text,
+                "confirmedData": confirmed_data
+            }),
+            on_event,
+        )?;
 
         response
             .get("session")
@@ -238,46 +357,76 @@ impl LocalAgentSidecar {
             .ok_or_else(|| "Agent Sidecar 响应缺少 session。".to_string())
     }
 
-    fn request(&mut self, request: Value) -> Result<Value, String> {
-        serde_json::to_writer(&mut self.stdin, &request)
+    fn request<F>(&self, request: Value, mut on_event: F) -> Result<Value, String>
+    where
+        F: FnMut(&Value),
+    {
+        let mut io = self
+            .io
+            .lock()
+            .map_err(|_| "Agent Sidecar IO 锁已损坏。".to_string())?;
+
+        serde_json::to_writer(&mut io.stdin, &request)
             .map_err(|error| format!("写入 Agent Sidecar 请求失败：{error}"))?;
-        self.stdin
+        io.stdin
             .write_all(b"\n")
             .map_err(|error| format!("写入 Agent Sidecar 请求换行失败：{error}"))?;
-        self.stdin
+        io.stdin
             .flush()
             .map_err(|error| format!("刷新 Agent Sidecar 请求失败：{error}"))?;
 
-        let mut line = String::new();
-        self.stdout
-            .read_line(&mut line)
-            .map_err(|error| format!("读取 Agent Sidecar 响应失败：{error}"))?;
+        loop {
+            let mut line = String::new();
+            let read = io
+                .stdout
+                .read_line(&mut line)
+                .map_err(|error| format!("读取 Agent Sidecar 响应失败：{error}"))?;
 
-        if line.trim().is_empty() {
-            return Err("Agent Sidecar 未返回结构化响应。".to_string());
+            if read == 0 || line.trim().is_empty() {
+                return Err("Agent Sidecar 未返回结构化响应。".to_string());
+            }
+
+            let response: Value = serde_json::from_str(&line)
+                .map_err(|error| format!("解析 Agent Sidecar 结构化响应失败：{error}"))?;
+
+            if response.get("ok").and_then(Value::as_bool) == Some(false) {
+                return Err(response
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Agent Sidecar 返回失败。")
+                    .to_string());
+            }
+
+            if let Some(event) = response.get("event") {
+                on_event(event);
+                continue;
+            }
+
+            return Ok(response);
         }
-
-        let response: Value = serde_json::from_str(&line)
-            .map_err(|error| format!("解析 Agent Sidecar 结构化响应失败：{error}"))?;
-
-        if response.get("ok").and_then(Value::as_bool) == Some(false) {
-            return Err(response
-                .get("error")
-                .and_then(Value::as_str)
-                .unwrap_or("Agent Sidecar 返回失败。")
-                .to_string());
-        }
-
-        Ok(response)
     }
 
-    fn shutdown(&mut self) {
-        let _ = self.request(json!({ "action": "shutdown" }));
-        if matches!(self.child.try_wait(), Ok(None)) {
-            let _ = self.child.kill();
+    fn shutdown(&self) {
+        if let Ok(mut child) = self.child.lock() {
+            if matches!(child.try_wait(), Ok(None)) {
+                let _ = child.kill();
+            }
+            let _ = child.wait();
         }
-        let _ = self.child.wait();
     }
+}
+
+fn runtime_status_message(runtime_info: &SidecarRuntimeInfo) -> String {
+    let mut message = format!(
+        "SDK Agent Sidecar 已就绪：{}/{}，最近预检会话 {}，完成于 {}。",
+        runtime_info.provider, runtime_info.model, runtime_info.sdk_session_id, runtime_info.completed_at
+    );
+    if let Some(fallback) = runtime_info.fallback_message.as_ref() {
+        if !fallback.trim().is_empty() {
+            message.push_str(&format!(" 模型回退信息：{}", fallback.trim()));
+        }
+    }
+    message
 }
 
 fn default_launcher() -> SidecarLauncher {
@@ -285,12 +434,38 @@ fn default_launcher() -> SidecarLauncher {
         return SidecarLauncher {
             executable: PathBuf::from(executable),
             args: Vec::new(),
+            resolution_error: None,
+        };
+    }
+
+    if cfg!(debug_assertions) {
+        let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .map(|path| path.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."));
+        let script = project_root.join("sidecar").join("agent-sdk-sidecar.mjs");
+        let resolution_error = if script.exists() {
+            None
+        } else {
+            Some(format!(
+                "开发模式下未找到 SDK Sidecar 脚本：{}",
+                script.to_string_lossy()
+            ))
+        };
+        return SidecarLauncher {
+            executable: PathBuf::from("bun"),
+            args: vec![script.to_string_lossy().into_owned()],
+            resolution_error,
         };
     }
 
     SidecarLauncher {
-        executable: env::current_exe().unwrap_or_else(|_| PathBuf::from("mbse-course-practice")),
-        args: vec!["--agent-sidecar".to_string()],
+        executable: PathBuf::new(),
+        args: Vec::new(),
+        resolution_error: Some(
+            "未配置 bundled Agent Sidecar。打包模式必须提供受控 sidecar 资源或设置 MBSE_AGENT_SIDECAR_BIN。"
+                .to_string(),
+        ),
     }
 }
 
@@ -301,279 +476,6 @@ fn stopped_status(message: &str) -> AgentSidecarStatus {
         endpoint: None,
         message: Some(message.to_string()),
     }
-}
-
-pub fn run_agent_sidecar_process() {
-    let stdin = io::stdin();
-    let mut stdout = io::stdout().lock();
-
-    for line in stdin.lock().lines() {
-        let response = match line {
-            Ok(request_line) => handle_sidecar_request_line(&request_line),
-            Err(error) => json!({
-                "ok": false,
-                "error": format!("读取 Sidecar 请求失败：{error}")
-            }),
-        };
-        let should_shutdown = response.get("shutdown").and_then(Value::as_bool) == Some(true);
-
-        if writeln!(stdout, "{response}").is_err() {
-            break;
-        }
-        if stdout.flush().is_err() || should_shutdown {
-            break;
-        }
-    }
-}
-
-fn handle_sidecar_request_line(request_line: &str) -> Value {
-    let request: Value = match serde_json::from_str(request_line) {
-        Ok(request) => request,
-        Err(error) => {
-            return json!({
-                "ok": false,
-                "error": format!("解析 Sidecar 请求失败：{error}")
-            });
-        }
-    };
-
-    match request.get("action").and_then(Value::as_str) {
-        Some("extract-candidates") => {
-            let source_text = request
-                .get("sourceText")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            json!({
-                "ok": true,
-                "session": build_extraction_session(source_text)
-            })
-        }
-        Some("generate-model-draft") => {
-            let source_text = request
-                .get("sourceText")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            let confirmed_data = request
-                .get("confirmedData")
-                .filter(|value| !value.is_null())
-                .cloned()
-                .unwrap_or_else(|| extract_confirmed_data(source_text));
-            json!({
-                "ok": true,
-                "session": build_draft_session(&confirmed_data)
-            })
-        }
-        Some("shutdown") => json!({
-            "ok": true,
-            "shutdown": true
-        }),
-        Some(action) => json!({
-            "ok": false,
-            "error": format!("未知 Sidecar 请求：{action}")
-        }),
-        None => json!({
-            "ok": false,
-            "error": "Sidecar 请求缺少 action。"
-        }),
-    }
-}
-
-fn build_extraction_session(source_text: &str) -> Value {
-    let confirmed_data = extract_confirmed_data(source_text);
-    let mut events = vec![
-        json!({
-            "type": "progress",
-            "message": "Sidecar 已接收源材料并开始抽取候选项。",
-            "percent": 20
-        }),
-        json!({
-            "type": "extraction",
-            "message": "已抽取确认候选项。",
-            "confirmedData": confirmed_data
-        }),
-        json!({
-            "type": "suggestion",
-            "message": "建议补全测控通信分系统与 REQ-TW2-004 的追溯关系。",
-            "target": "extraction",
-            "recommendation": "请确认 REQ-TW2-004 是否应追溯到测控通信分系统，并补充材料出处。",
-            "severity": "warning"
-        }),
-    ];
-
-    if !source_text.contains("REQ-") {
-        events.push(json!({
-            "type": "error",
-            "message": "源材料缺少稳定需求编号，已使用天问二号默认需求候选补齐。",
-            "recoverable": true
-        }));
-    }
-
-    json!({
-        "sessionId": format!("agent-extraction-session-{}", now_millis()),
-        "events": events
-    })
-}
-
-fn build_draft_session(confirmed_data: &Value) -> Value {
-    let draft = build_model_draft(confirmed_data);
-
-    json!({
-        "sessionId": format!("agent-draft-session-{}", now_millis()),
-        "events": [
-            {
-                "type": "progress",
-                "message": "已生成 SysML v2 与视图模型草案。",
-                "percent": 80
-            },
-            {
-                "type": "suggestion",
-                "message": "建议补强需求到 BDD 模块的追溯覆盖。",
-                "target": "model-draft",
-                "recommendation": "请检查模型草案中 REQ-TW2-004 到测控通信分系统 block 的追溯覆盖是否完整。",
-                "severity": "info"
-            },
-            {
-                "type": "model-draft",
-                "message": "模型草案已通过基础 schema 与引用校验。",
-                "draft": draft
-            }
-        ]
-    })
-}
-
-fn extract_confirmed_data(source_text: &str) -> Value {
-    json!({
-        "projectId": "tianwen-2",
-        "packageName": "Tianwen2ConfirmedModel",
-        "mission": infer_mission(source_text),
-        "requirements": fallback_requirements(),
-        "subsystems": fallback_subsystems()
-    })
-}
-
-fn build_model_draft(confirmed_data: &Value) -> Value {
-    json!({
-        "sysmlText": build_sysml_text(confirmed_data),
-        "viewModel": build_view_model(),
-        "validation": {
-            "valid": true,
-            "errors": []
-        }
-    })
-}
-
-fn build_view_model() -> Value {
-    json!({
-        "schemaVersion": "0.2.0",
-        "projectId": "tianwen-2",
-        "source": "confirmed-import-data",
-        "generatedFrom": "Tianwen2ConfirmedModel",
-        "views": [
-            {
-                "id": "requirements-view",
-                "title": "需求视图",
-                "kind": "requirements",
-                "layout": "auto",
-                "layoutEngine": "deterministic-layered-layout",
-                "nodes": [
-                    { "id": "REQ-TW2-001", "kind": "requirement", "label": "小行星采样返回任务", "text": "探测器应支持近地小行星采样返回任务。", "position": { "x": 40, "y": 40 } },
-                    { "id": "REQ-TW2-002", "kind": "requirement", "label": "深空巡航安全边界", "text": "探测器应在深空巡航阶段维持姿态、能源和热控安全边界。", "position": { "x": 320, "y": 158 } },
-                    { "id": "REQ-TW2-003", "kind": "requirement", "label": "测控通信与数据下传", "text": "探测器应通过测控通信链路下传工程遥测与科学数据。", "position": { "x": 320, "y": 276 } },
-                    { "id": "REQ-TW2-004", "kind": "requirement", "label": "模型工件追溯关系", "text": "探测器应保留模型工件与需求、结构、行为视图之间的追溯关系。", "position": { "x": 320, "y": 394 } },
-                    { "id": "spacecraft-platform", "kind": "subsystem", "label": "航天器平台", "position": { "x": 680, "y": 40 } },
-                    { "id": "sampling-return", "kind": "subsystem", "label": "采样返回分系统", "position": { "x": 680, "y": 158 } },
-                    { "id": "power-thermal", "kind": "subsystem", "label": "电源与热控分系统", "position": { "x": 680, "y": 276 } },
-                    { "id": "gnc", "kind": "subsystem", "label": "制导导航与控制分系统", "position": { "x": 680, "y": 394 } },
-                    { "id": "ttc-communication", "kind": "subsystem", "label": "测控通信分系统", "position": { "x": 680, "y": 512 } }
-                ],
-                "edges": [
-                    { "id": "hierarchy-REQ-TW2-001-REQ-TW2-002", "kind": "hierarchy", "source": "REQ-TW2-001", "target": "REQ-TW2-002", "label": "需求层级" },
-                    { "id": "hierarchy-REQ-TW2-001-REQ-TW2-003", "kind": "hierarchy", "source": "REQ-TW2-001", "target": "REQ-TW2-003", "label": "需求层级" },
-                    { "id": "hierarchy-REQ-TW2-001-REQ-TW2-004", "kind": "hierarchy", "source": "REQ-TW2-001", "target": "REQ-TW2-004", "label": "需求层级" },
-                    { "id": "trace-REQ-TW2-001-spacecraft-platform", "kind": "trace", "source": "REQ-TW2-001", "target": "spacecraft-platform", "label": "追溯满足" },
-                    { "id": "trace-REQ-TW2-001-sampling-return", "kind": "trace", "source": "REQ-TW2-001", "target": "sampling-return", "label": "追溯满足" },
-                    { "id": "trace-REQ-TW2-002-power-thermal", "kind": "trace", "source": "REQ-TW2-002", "target": "power-thermal", "label": "追溯满足" },
-                    { "id": "trace-REQ-TW2-003-ttc-communication", "kind": "trace", "source": "REQ-TW2-003", "target": "ttc-communication", "label": "追溯满足" },
-                    { "id": "trace-REQ-TW2-004-spacecraft-platform", "kind": "trace", "source": "REQ-TW2-004", "target": "spacecraft-platform", "label": "追溯满足" }
-                ]
-            },
-            {
-                "id": "bdd-structure-view",
-                "title": "BDD 结构视图",
-                "kind": "bdd",
-                "layout": "auto",
-                "layoutEngine": "deterministic-layered-layout",
-                "nodes": [
-                    { "id": "spacecraft-platform", "kind": "system", "label": "航天器平台", "position": { "x": 320, "y": 40 } },
-                    { "id": "sampling-return", "kind": "subsystem", "label": "采样返回分系统", "position": { "x": 80, "y": 220 } },
-                    { "id": "ttc-communication", "kind": "subsystem", "label": "测控通信分系统", "position": { "x": 310, "y": 220 } },
-                    { "id": "power-thermal", "kind": "subsystem", "label": "电源与热控分系统", "position": { "x": 540, "y": 220 } },
-                    { "id": "gnc", "kind": "subsystem", "label": "制导导航与控制分系统", "position": { "x": 770, "y": 220 } }
-                ],
-                "edges": [
-                    { "id": "composition-spacecraft-platform-sampling-return", "kind": "composition", "source": "spacecraft-platform", "target": "sampling-return", "label": "组成" },
-                    { "id": "composition-spacecraft-platform-ttc-communication", "kind": "composition", "source": "spacecraft-platform", "target": "ttc-communication", "label": "组成" },
-                    { "id": "composition-spacecraft-platform-power-thermal", "kind": "composition", "source": "spacecraft-platform", "target": "power-thermal", "label": "组成" },
-                    { "id": "composition-spacecraft-platform-gnc", "kind": "composition", "source": "spacecraft-platform", "target": "gnc", "label": "组成" }
-                ]
-            }
-        ],
-        "validation": {
-            "status": "passed",
-            "checkedRules": ["schema", "missing-reference"]
-        }
-    })
-}
-
-fn build_sysml_text(confirmed_data: &Value) -> String {
-    let mission = confirmed_data
-        .get("mission")
-        .and_then(Value::as_str)
-        .unwrap_or("天问二号任务面向小行星取样返回和主带彗星扩展探测。");
-
-    format!(
-        "package Tianwen2ConfirmedModel {{\n  doc /* {mission} */\n\n  requirement def REQ_TW2_001 {{ doc /* 探测器应支持近地小行星采样返回任务。 */ }}\n  requirement def REQ_TW2_002 {{ doc /* 探测器应在深空巡航阶段维持姿态、能源和热控安全边界。 */ }}\n  requirement def REQ_TW2_003 {{ doc /* 探测器应通过测控通信链路下传工程遥测与科学数据。 */ }}\n  requirement def REQ_TW2_004 {{ doc /* 探测器应保留模型工件与需求、结构、行为视图之间的追溯关系。 */ }}\n\n  part def spacecraft_platform {{ doc /* 航天器平台。 */ }}\n  part def sampling_return {{ doc /* 采样返回分系统。 */ }}\n  part def ttc_communication {{ doc /* 测控通信分系统。 */ }}\n  part def power_thermal {{ doc /* 电源与热控分系统。 */ }}\n  part def gnc {{ doc /* 制导导航与控制分系统。 */ }}\n\n  satisfy REQ_TW2_001_sampling_return {{ subject sampling_return; requirement REQ_TW2_001; }}\n  satisfy REQ_TW2_003_ttc_communication {{ subject ttc_communication; requirement REQ_TW2_003; }}\n}}"
-    )
-}
-
-fn infer_mission(source_text: &str) -> String {
-    let mission_lines: Vec<String> = source_text
-        .lines()
-        .map(|line| line.trim().trim_start_matches(['-', '#', ' ']).trim())
-        .filter(|line| {
-            !line.is_empty()
-                && !line.starts_with("REQ-")
-                && (line.contains("小行星")
-                    || line.contains("彗星")
-                    || line.contains("采样返回")
-                    || line.contains("深空"))
-        })
-        .map(ToString::to_string)
-        .collect();
-
-    mission_lines
-        .first()
-        .cloned()
-        .unwrap_or_else(|| "天问二号任务面向小行星取样返回和主带彗星扩展探测。".to_string())
-}
-
-fn fallback_requirements() -> Value {
-    json!([
-        { "id": "REQ-TW2-001", "title": "小行星采样返回任务", "text": "探测器应支持近地小行星采样返回任务。", "parentId": null, "tracedTo": ["航天器平台", "采样返回分系统"] },
-        { "id": "REQ-TW2-002", "title": "深空巡航安全边界", "text": "探测器应在深空巡航阶段维持姿态、能源和热控安全边界。", "parentId": "REQ-TW2-001", "tracedTo": ["电源与热控分系统", "制导导航与控制分系统"] },
-        { "id": "REQ-TW2-003", "title": "测控通信与数据下传", "text": "探测器应通过测控通信链路下传工程遥测与科学数据。", "parentId": "REQ-TW2-001", "tracedTo": ["测控通信分系统"] },
-        { "id": "REQ-TW2-004", "title": "模型工件追溯关系", "text": "探测器应保留模型工件与需求、结构、行为视图之间的追溯关系。", "parentId": "REQ-TW2-001", "tracedTo": ["航天器平台"] }
-    ])
-}
-
-fn fallback_subsystems() -> Value {
-    json!([
-        { "id": "spacecraft-platform", "name": "航天器平台", "parentId": null },
-        { "id": "sampling-return", "name": "采样返回分系统", "parentId": "spacecraft-platform" },
-        { "id": "ttc-communication", "name": "测控通信分系统", "parentId": "spacecraft-platform" },
-        { "id": "power-thermal", "name": "电源与热控分系统", "parentId": "spacecraft-platform" },
-        { "id": "gnc", "name": "制导导航与控制分系统", "parentId": "spacecraft-platform" }
-    ])
 }
 
 fn now_millis() -> u128 {

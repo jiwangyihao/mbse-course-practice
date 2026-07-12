@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { vi } from 'vitest';
 import { extractTianwen2ConfirmedData, generateTianwen2ModelArtifacts, validateViewModel } from '../src/domain/modelGeneration';
 import type { ModelGenerationResult } from '../src/domain/modelGeneration';
@@ -13,6 +13,10 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: tauriInvokeMock,
 }));
 
+beforeEach(() => {
+  tauriInvokeMock.mockReset();
+});
+
 type InvokeCall = {
   command: string;
   args?: Record<string, unknown>;
@@ -25,8 +29,24 @@ const sourceText = [
   '航天器平台应为载荷、推进、能源、热控和测控通信分系统提供统一承载。',
 ].join('\n');
 
-function createValidAgentDraft(): ModelGenerationResult {
-  return generateTianwen2ModelArtifacts(extractTianwen2ConfirmedData(sourceText));
+function createValidAgentDraft(sessionId = 'ui-agent-draft-session'): ModelGenerationResult {
+  const draft = generateTianwen2ModelArtifacts(extractTianwen2ConfirmedData(sourceText));
+  return {
+    ...draft,
+    viewModel: {
+      ...draft.viewModel,
+      source: 'sdk-agent-generated',
+    },
+    provenance: {
+      mode: 'sdk-agent',
+      provider: 'test-provider',
+      model: 'test-model',
+      sdkSessionId: sessionId,
+      completedAt: '2026-07-10T00:00:02.000Z',
+      schemaOverridden: false,
+      validationSummary: { valid: true, errorCount: 0, findingCount: 0 },
+    },
+  };
 }
 
 function requireEvent<TType extends AgentSidecarEvent['type']>(
@@ -238,11 +258,12 @@ describe('Agent Sidecar 客户端契约', () => {
       'Agent 草案必须同时提供需求视图与 BDD 结构视图，确认后才能复用 #3 的展示工作台',
     ).toEqual(expect.arrayContaining(['requirements', 'bdd']));
   });
+
 });
 
 function mockTauriSidecarForUi() {
   const confirmedData = extractTianwen2ConfirmedData(sourceText);
-  const draft = generateTianwen2ModelArtifacts(confirmedData);
+  const draft = createValidAgentDraft();
   const extractionSession: AgentModelingSession = {
     sessionId: 'ui-agent-extraction-session',
     events: [
@@ -283,7 +304,9 @@ function mockTauriSidecarForUi() {
 }
 
 describe('Agent Sidecar 用户路径契约', () => {
-  it('工作台提供启动停止入口，并允许用户确认或拒绝 Agent 输出后复用模型展示区', async () => {
+  it('工作台提供启动停止入口，并允许用户确认或拒绝 Sidecar 本地草案后生成完整工作台工件', async () => {
+    const expectedConfirmedData = extractTianwen2ConfirmedData(sourceText);
+
     mockTauriSidecarForUi();
     render(React.createElement(App));
 
@@ -291,32 +314,110 @@ describe('Agent Sidecar 用户路径契约', () => {
     expect(screen.getByRole('button', { name: /启动 Agent Sidecar/ }), '用户应能从工作台启动本地 Agent Sidecar').toBeEnabled();
     expect(screen.getByRole('button', { name: /停止 Agent Sidecar/ }), '用户应能从工作台停止本地 Agent Sidecar').toBeEnabled();
 
-    fireEvent.click(screen.getByRole('button', { name: /新建项目 \/ 导入材料|导入材料|使用 Agent 生成模型草案/ }));
+    fireEvent.click(screen.getByRole('button', { name: /新建项目 \/ 导入材料/ }));
     fireEvent.change(screen.getByRole('textbox', { name: /源材料|材料内容|粘贴/ }), {
       target: { value: sourceText },
     });
-    fireEvent.click(screen.getByRole('button', { name: /抽取候选|调用 Agent/ }));
+    fireEvent.click(screen.getByRole('button', { name: /抽取候选/ }));
 
     const dialog = await screen.findByRole('dialog', { name: /材料导入与确认向导/ });
 
+    expect(within(dialog).getByText('SDK Agent 候选抽取结果（待确认）'), '候选阶段必须明确当前结果来自真实 SDK Agent').toBeVisible();
+    expect(within(dialog).getByText(/真实建模 Agent 候选/), '候选阶段应明确候选来自真实 SDK Agent').toBeVisible();
     expect(within(dialog).getByText(/^修正建议$/), '用户确认抽取结果前应看到专门的修正建议区域标题，而不是只能读结构化事件流水').toBeVisible();
-    expect(within(dialog).getByText(/REQ-TW2-004.*测控通信分系统|测控通信分系统.*REQ-TW2-004/), '抽取阶段修正建议应展示具体建议内容，帮助用户决定是否确认 Agent 输出').toBeVisible();
-    expect(within(dialog).getByText(/^warning$/), '抽取阶段修正建议应展示 severity，帮助用户判断处理优先级').toBeVisible();
-    expect(within(dialog).getByRole('button', { name: /确认 Agent 输出并生成模型草案/ }), '用户必须先确认 Agent 抽取结果，再生成模型草案').toBeEnabled();
-    expect(within(dialog).getByRole('button', { name: /拒绝 Agent 输出/ }), '用户必须能拒绝 Agent 输出并返回人工确认路径').toBeEnabled();
+    expect(within(dialog).getByText(/REQ-TW2-004.*测控通信分系统|测控通信分系统.*REQ-TW2-004/), '抽取阶段修正建议应展示具体建议内容').toBeVisible();
+    expect(within(dialog).getByText(/^warning$/), '抽取阶段修正建议应展示 severity').toBeVisible();
+    expect(within(dialog).getByRole('button', { name: /确认候选并生成最终模型工件/ }), '用户必须先确认候选，再生成最终模型工件').toBeEnabled();
+    expect(within(dialog).getByRole('button', { name: /拒绝当前 Agent 结果/ }), '用户必须能拒绝当前 Agent 结果并返回人工确认路径').toBeEnabled();
+    expect(
+      tauriInvokeMock.mock.calls.filter(([command]) => command === 'extract_agent_candidates'),
+      '首次抽取必须只调用一次候选抽取命令并传递用户源材料',
+    ).toEqual([['extract_agent_candidates', { sourceText }]]);
 
-    fireEvent.click(within(dialog).getByRole('button', { name: /确认 Agent 输出并生成模型草案/ }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /拒绝当前 Agent 结果/ }));
+    expect(
+      tauriInvokeMock.mock.calls.filter(([command]) => command === 'generate_agent_model_draft'),
+      '拒绝候选后不得继续调用草案生成命令',
+    ).toHaveLength(0);
+    expect(within(dialog).getByRole('button', { name: /抽取候选/ }), '拒绝后应回到可重新抽取的输入态').toBeEnabled();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: /抽取候选/ }));
+    const candidateConfirmationButton = await within(dialog).findByRole('button', { name: /确认候选并生成最终模型工件/ });
+    expect(
+      tauriInvokeMock.mock.calls.filter(([command]) => command === 'extract_agent_candidates'),
+      '重新进入确认路径应再次抽取候选，且两次均使用原始材料',
+    ).toEqual([
+      ['extract_agent_candidates', { sourceText }],
+      ['extract_agent_candidates', { sourceText }],
+    ]);
+
+    fireEvent.click(candidateConfirmationButton);
     const draftDialog = await screen.findByRole('dialog', { name: /材料导入与确认向导/ });
+    expect(await within(draftDialog).findByText('SDK Agent 最终模型工件（待确认保存）'), '草案阶段必须继续声明当前结果来自真实 SDK Agent').toBeVisible();
+    expect(within(draftDialog).getByText('SDK Agent 最终模型摘要'), '生成草案后最终确认前应展示 SDK Agent 最终模型摘要').toBeVisible();
     expect(within(draftDialog).getByText(/^修正建议$/), '生成草案后最终确认前仍应展示草案阶段修正建议区域标题').toBeVisible();
-    expect(within(draftDialog).getByText(/BDD 结构视图.*追溯覆盖|追溯覆盖.*BDD 结构视图/), '草案阶段修正建议应展示模型草案修正内容，而不是空事件').toBeVisible();
+    expect(within(draftDialog).getByText(/BDD 结构视图.*追溯覆盖|追溯覆盖.*BDD 结构视图/), '草案阶段修正建议应展示 SDK Agent 修正内容，而不是空事件').toBeVisible();
     expect(within(draftDialog).getByText(/^info$/), '草案阶段修正建议应展示 severity，保持结构化事件字段可见').toBeVisible();
-    fireEvent.click(await within(draftDialog).findByRole('button', { name: /^确认 Agent 输出$/ }));
+    expect(
+      tauriInvokeMock.mock.calls.filter(([command]) => command === 'generate_agent_model_draft'),
+      '确认候选后才应调用一次草案生成命令，并将已确认的候选传入第二阶段',
+    ).toEqual([['generate_agent_model_draft', { sourceText, confirmedData: expectedConfirmedData }]]);
 
-    expect(await screen.findByText(/SysML v2 文本/), '确认 Agent 输出后应复用 #3 的 SysML v2 展示区').toBeVisible();
-    expect(screen.getByText(/JSON 视图模型/), '确认 Agent 输出后应复用 #3 的 JSON 视图模型展示区').toBeVisible();
-    expect(screen.getByText(/需求视图/), '确认 Agent 输出后应复用 #3 的需求视图').toBeVisible();
-    expect(screen.getByText(/BDD 结构视图/), '确认 Agent 输出后应复用 #3 的 BDD 结构视图').toBeVisible();
-    expect(screen.getByText(/Schema 校验通过/), '确认 Agent 输出后应展示 schema 校验通过标签').toBeVisible();
-    expect(screen.getByText(/引用校验通过/), '确认 Agent 输出后应展示引用校验通过标签').toBeVisible();
+    fireEvent.click(await within(draftDialog).findByRole('button', { name: /确认 Agent 工件并保存到工作台/ }));
+
+    await waitFor(() => {
+      expect(document.querySelector('.generated-workspace'), '最终确认后应进入 MBSE 建模工作区').not.toBeNull();
+    });
+    const requirementsTab = screen.getByRole('tab', { name: '需求视图' });
+    expect(requirementsTab, '工作区应默认打开需求视图').toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tabpanel'), '默认需求视图的模型画布容器应可见').toBeVisible();
+    expect(screen.getByText(/test-provider\/test-model.*ui-agent-draft-session/), '模型检查器必须展示真实 Agent provenance').toBeVisible();
+
+    for (const tabLabel of ['需求视图', 'BDD 结构视图', '活动图', '需求追溯矩阵', 'IBD 内部块图', '参数约束视图']) {
+      expect(screen.getByRole('tab', { name: tabLabel }), `完整工作台应提供 ${tabLabel} 标签页`).toBeVisible();
+    }
+
+    expect(screen.getByText('模型检查器')).toBeVisible();
+    expect(screen.getByText('项目导出')).toBeVisible();
+    expect(screen.getByText('尚无导出记录')).toBeVisible();
+  }, 15000);
+
+  it('拒绝保存缺少真实 SDK Agent provenance 的最终工件', async () => {
+    const confirmedData = extractTianwen2ConfirmedData(sourceText);
+    const invalidDraft = generateTianwen2ModelArtifacts(confirmedData);
+
+    tauriInvokeMock.mockImplementation(async (command: string) => {
+      if (command === 'agent_sidecar_status') return { state: 'stopped', pid: null, endpoint: null };
+      if (command === 'start_agent_sidecar') return { state: 'running', pid: 4242, endpoint: 'local://agent-sidecar/invalid' };
+      if (command === 'extract_agent_candidates') {
+        return {
+          sessionId: 'invalid-extraction-session',
+          events: [{ type: 'extraction', message: '已抽取确认候选项。', confirmedData }],
+        };
+      }
+      if (command === 'generate_agent_model_draft') {
+        return {
+          sessionId: 'invalid-draft-session',
+          events: [{ type: 'model-draft', message: '模型草案已生成。', draft: invalidDraft }],
+        };
+      }
+      if (command === 'stop_agent_sidecar') return { state: 'stopped', pid: null, endpoint: null };
+      throw new Error(`未预期的 Tauri 命令：${command}`);
+    });
+
+    render(React.createElement(App));
+    fireEvent.click(screen.getByRole('button', { name: /新建项目 \/ 导入材料/ }));
+    fireEvent.change(screen.getByRole('textbox', { name: /源材料|材料内容|粘贴/ }), {
+      target: { value: sourceText },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /抽取候选/ }));
+    const invalidDialog = await screen.findByRole('dialog', { name: /材料导入与确认向导/ });
+    fireEvent.click(await within(invalidDialog).findByRole('button', { name: /确认候选并生成最终模型工件/ }));
+    const invalidDraftDialog = await screen.findByRole('dialog', { name: /材料导入与确认向导/ });
+    fireEvent.click(await within(invalidDraftDialog).findByRole('button', { name: /确认 Agent 工件并保存到工作台/ }));
+
+    expect(await screen.findByText(/拒绝保存缺少真实 SDK Agent provenance 的模型工件/)).toBeVisible();
+    expect(tauriInvokeMock.mock.calls.filter(([command]) => command === 'save_workbench_project')).toHaveLength(0);
+    expect(screen.queryByText('MBSE 建模工作区')).not.toBeInTheDocument();
   });
 });

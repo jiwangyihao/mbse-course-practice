@@ -27,7 +27,7 @@ package Tianwen2ConfirmedModel {
     doc /* IBD 端口接口 sample-transfer，用于端口连接静态校验。 */
   }
 
-  interface def power_thermal {
+  interface def power_thermal_interface {
     doc /* IBD 端口接口 power-thermal，用于端口连接静态校验。 */
   }
 
@@ -38,7 +38,7 @@ package Tianwen2ConfirmedModel {
   part def spacecraft_platform {
     doc /* 航天器平台。 */
     port sample_return_mechanical_interface : sample_transfer;
-    port platform_power_thermal_bus : power_thermal;
+    port platform_power_thermal_bus : power_thermal_interface;
   }
 
   connection def connection_sample_transfer_to_platform {
@@ -70,7 +70,7 @@ package Tianwen2ConfirmedModel {
     doc /* composition parent spacecraft-platform。 */
     port sample_transfer_out : sample_transfer;
     port sample_telemetry_out : telemetry_data;
-    port sample_power_thermal_in : power_thermal;
+    port sample_power_thermal_in : power_thermal_interface;
   }
 
   part def ttc_communication {
@@ -83,8 +83,8 @@ package Tianwen2ConfirmedModel {
   part def power_thermal {
     doc /* 电源与热控分系统。 */
     doc /* composition parent spacecraft-platform。 */
-    port power_thermal_service : power_thermal;
-    port thermal_control : power_thermal;
+    port power_thermal_service : power_thermal_interface;
+    port thermal_control : power_thermal_interface;
   }
 
   part def gnc {
@@ -117,17 +117,6 @@ package Tianwen2ConfirmedModel {
     doc /* performed by 航天器平台、测控通信分系统。 */
   }
 
-  item flow activity_sample_return_to_activity_cruise_safety {
-    doc /* 活动流：近地小行星取样返回 -> 深空巡航安全维持。 */
-  }
-
-  item flow activity_cruise_safety_to_activity_telemetry_downlink {
-    doc /* 活动流：深空巡航安全维持 -> 遥测与科学数据下传。 */
-  }
-
-  item flow activity_telemetry_downlink_to_activity_trace_coverage_check {
-    doc /* 活动流：遥测与科学数据下传 -> 模型工件追溯覆盖校验。 */
-  }
 
   satisfy REQ_TW2_001_spacecraft_platform {
     subject spacecraft_platform;

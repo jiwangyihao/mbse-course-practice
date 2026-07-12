@@ -1,6 +1,5 @@
 export interface WorkbenchEntry {
   productName: string;
-  courseName: string;
   workspaceBoundary: string;
   sampleProjectId: string;
   sampleProjectName: string;
@@ -10,7 +9,6 @@ export interface SampleProjectManifest {
   id: string;
   name: string;
   caseName: string;
-  course: string;
   productBoundary: string;
   workspaceBoundary: string;
   description: string;
@@ -67,8 +65,7 @@ export interface BundledSampleProject {
 
 export const workbenchEntry: WorkbenchEntry = {
   productName: 'MBSE 建模工作台',
-  courseName: '《基于模型的系统工程》课程大实践',
-  workspaceBoundary: '独立大实践工作区 C:\\tmp\\mbse-course-practice，不属于前 12 个小实验工作区 C:\\tmp\\mbse-course-lab',
+  workspaceBoundary: '独立工作区 C:\\tmp\\mbse-course-practice',
   sampleProjectId: 'tianwen-2',
   sampleProjectName: '天问二号探测器样例项目',
 };

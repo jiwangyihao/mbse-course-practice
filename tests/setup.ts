@@ -51,3 +51,42 @@ Object.defineProperty(globalThis, 'ResizeObserver', {
   writable: true,
   value: ResizeObserverMock,
 });
+
+class DOMMatrixReadOnlyMock {
+  a = 1;
+  b = 0;
+  c = 0;
+  d = 1;
+  e = 0;
+  f = 0;
+  m11 = 1;
+  m22 = 1;
+  m41 = 0;
+  m42 = 0;
+
+  constructor(_transform?: string) {}
+
+  inverse() {
+    return this;
+  }
+}
+
+Object.defineProperty(window, 'DOMMatrixReadOnly', {
+  writable: true,
+  value: DOMMatrixReadOnlyMock,
+});
+
+Object.defineProperty(globalThis, 'DOMMatrixReadOnly', {
+  writable: true,
+  value: DOMMatrixReadOnlyMock,
+});
+
+Object.defineProperty(window, 'DOMMatrix', {
+  writable: true,
+  value: DOMMatrixReadOnlyMock,
+});
+
+Object.defineProperty(globalThis, 'DOMMatrix', {
+  writable: true,
+  value: DOMMatrixReadOnlyMock,
+});
