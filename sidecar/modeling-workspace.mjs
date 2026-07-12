@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { validateViewModel } from '../src/domain/modelGeneration.ts';
-import { validateSysml } from './sysml-validator.mjs';
+import { validateSysmlWithLspFallback } from './sysml-validator.mjs';
 
 const REQUIRED_VIEW_KINDS = [
   'requirements',
@@ -100,11 +100,24 @@ async function verifyArtifactContents(confirmedData, sysmlText, rawViewModel, wo
     diagnostics.push(createDiagnostic('placeholder', OUTPUT_SYSML_PATH, 'SysML 中仍存在占位符或 TODO。', '替换为已确认事实。'));
   }
 
-  const sysmlValidation = await validateSysml({
-    workspaceRoot,
-    filePath: path.join(workspaceRoot, OUTPUT_SYSML_PATH),
+  const sysmlWorkspaceRoot = path.join(workspaceRoot, 'output');
+  const sysmlValidation = await validateSysmlWithLspFallback({
+    workspaceRoot: sysmlWorkspaceRoot,
+    filePath: path.join(sysmlWorkspaceRoot, 'model.sysml'),
     text: sysmlText,
   });
+  if (sysmlValidation.fallback?.from === 'sysml2') {
+    const sysml2Message = sysmlValidation.fallback.originalValidation?.diagnostics?.[0]?.message ?? 'sysml2 返回了未通过诊断。';
+    diagnostics.push(
+      createDiagnostic(
+        'sysml2-fallback',
+        OUTPUT_SYSML_PATH,
+        `sysml2 未通过，当前临时回退到 LSP：${sysml2Message}`,
+        '修复 sysml2 诊断后再视为完全兼容。',
+        'warning',
+      ),
+    );
+  }
   for (const diagnostic of sysmlValidation.diagnostics.filter((item) => item.severity <= 2)) {
     const isBenignUnusedDefinition =
       diagnostic.severity === 2 &&

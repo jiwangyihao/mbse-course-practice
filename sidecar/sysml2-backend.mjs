@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { access, mkdir, readdir, stat } from 'node:fs/promises';
+import { access, copyFile, mkdir, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 const SYSML2_TIMEOUT_MS = 120_000;
 const SYSML2_SOURCE_RELATIVE_PATH = path.join('tools', 'sysml2');
 const ANSI_PATTERN = /\u001B\[[0-9;]*m/g;
+const OVERLAY_IGNORED_DIRS = new Set(['.git', 'node_modules', 'target', 'dist']);
 
 export class Sysml2BackendUnavailableError extends Error {}
 
@@ -185,7 +186,7 @@ function parseSysml2Diagnostics(stderr, filePath) {
   const text = stripAnsi(stderr);
   const diagnostics = [];
   const lines = text.split('\n');
-  const primaryPattern = /^(.*?):(\d+):(\d+):\s+(error|warning|note):\s+(.*)$/;
+  const primaryPattern = /^(.*?):(\d+):(\d+):\s+(error|warning|note)(?:\[[^\]]+\])?:\s+(.*)$/;
   const notePattern = /^\s*=\s*note:\s+(.*)$/;
 
   for (const line of lines) {
@@ -290,34 +291,161 @@ function splitJsonDocuments(stdout) {
   }
   return docs;
 }
+function isInsideRoot(root, candidate) {
+  const relativePath = path.relative(root, candidate);
+  return relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath));
+}
 
-export async function runSysml2Analysis({ workspaceRoot, filePath, timeoutMs = 30_000, select = [] }) {
+async function copySysmlWorkspaceFiles(sourceRoot, overlayRoot, currentRelativePath = '', skippedRelativePath = null) {
+  const entries = (await readdir(sourceRoot, { withFileTypes: true }))
+    .filter((entry) => !OVERLAY_IGNORED_DIRS.has(entry.name))
+    .sort((left, right) => left.name.localeCompare(right.name));
+
+  for (const entry of entries) {
+    const relativePath = currentRelativePath ? path.join(currentRelativePath, entry.name) : entry.name;
+    const sourcePath = path.join(sourceRoot, entry.name);
+
+    if (entry.isDirectory()) {
+      await copySysmlWorkspaceFiles(sourcePath, overlayRoot, relativePath, skippedRelativePath);
+      continue;
+    }
+
+    if (!entry.isFile() || path.extname(entry.name).toLowerCase() !== '.sysml') {
+      continue;
+    }
+    if (skippedRelativePath && relativePath === skippedRelativePath) {
+      continue;
+    }
+
+    const overlayPath = path.join(overlayRoot, relativePath);
+    await mkdir(path.dirname(overlayPath), { recursive: true });
+    await copyFile(sourcePath, overlayPath);
+  }
+}
+
+async function createOverlayInvocation({ workspaceRoot, filePath, text }) {
+  if (typeof text !== 'string') {
+    return null;
+  }
+
+  const originalWorkspaceRoot = path.resolve(workspaceRoot);
+  const originalFilePath = path.resolve(filePath);
+  const overlayRoot = await mkdtemp(path.join(os.tmpdir(), 'mbse-sysml2-overlay-'));
+
+  try {
+    const targetInsideWorkspaceRoot = isInsideRoot(originalWorkspaceRoot, originalFilePath);
+    const fileRelativePath = targetInsideWorkspaceRoot
+      ? path.relative(originalWorkspaceRoot, originalFilePath)
+      : path.basename(originalFilePath);
+
+    await copySysmlWorkspaceFiles(originalWorkspaceRoot, overlayRoot, '', targetInsideWorkspaceRoot ? fileRelativePath : null);
+
+    const overlayFilePath = path.join(overlayRoot, fileRelativePath);
+    await mkdir(path.dirname(overlayFilePath), { recursive: true });
+    await writeFile(overlayFilePath, text, 'utf8');
+
+    return {
+      overlayRoot,
+      overlayFilePath,
+      overlayTargetPathMap: new Map([[path.resolve(overlayFilePath), originalFilePath]]),
+      originalWorkspaceRoot,
+      originalFilePath,
+    };
+  } catch (error) {
+    await rm(overlayRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    throw error;
+  }
+}
+
+function rewriteOverlayPathValue(filePath, overlay) {
+  if (!overlay || typeof filePath !== 'string' || filePath.trim() === '') {
+    return filePath;
+  }
+
+  const resolvedPath = path.isAbsolute(filePath)
+    ? path.resolve(filePath)
+    : path.resolve(overlay.overlayRoot, filePath);
+  const mappedTargetPath = overlay.overlayTargetPathMap?.get(resolvedPath);
+  if (mappedTargetPath) {
+    return mappedTargetPath;
+  }
+  if (!isInsideRoot(overlay.overlayRoot, resolvedPath)) {
+    return filePath;
+  }
+
+  const relativePath = path.relative(overlay.overlayRoot, resolvedPath);
+  return path.join(overlay.originalWorkspaceRoot, relativePath);
+}
+
+function rewriteOverlayDiagnostics(diagnostics, overlay) {
+  if (!overlay) {
+    return diagnostics;
+  }
+
+  return diagnostics.map((diagnostic) => ({
+    ...diagnostic,
+    filePath: rewriteOverlayPathValue(diagnostic.filePath, overlay),
+  }));
+}
+
+function rewriteOverlayDocuments(semanticDocuments, overlay) {
+  if (!overlay) {
+    return semanticDocuments;
+  }
+
+  return semanticDocuments.map((document) => {
+    if (typeof document?.meta?.source !== 'string') {
+      return document;
+    }
+    return {
+      ...document,
+      meta: {
+        ...document.meta,
+        source: rewriteOverlayPathValue(document.meta.source, overlay),
+      },
+    };
+  });
+}
+
+export async function runSysml2Analysis({ workspaceRoot, filePath, text, timeoutMs = 30_000, select = [] }) {
   const executable = await getExecutable();
-  const args = ['--color=never', '-f', 'json', '-I', workspaceRoot];
+  const overlay = await createOverlayInvocation({ workspaceRoot, filePath, text });
+  const invocationWorkspaceRoot = overlay?.overlayRoot ?? path.resolve(workspaceRoot);
+  const invocationFilePath = overlay?.overlayFilePath ?? path.resolve(filePath);
+  const args = ['--color=never', '-f', 'json', '-I', invocationWorkspaceRoot];
   for (const pattern of select) {
     args.push('-s', pattern);
   }
-  args.push(filePath);
+  args.push(invocationFilePath);
 
-  const result = await runCommand(executable, args, {
-    cwd: workspaceRoot,
-    timeoutMs,
-  });
-  const diagnostics = parseSysml2Diagnostics(result.stderr, filePath);
-  const blockingDiagnostics = diagnostics.filter((diagnostic) => diagnostic.severity <= 2);
-  const semanticDocuments = result.stdout.trim() ? splitJsonDocuments(result.stdout) : [];
+  try {
+    const result = await runCommand(executable, args, {
+      cwd: invocationWorkspaceRoot,
+      timeoutMs,
+    });
+    let diagnostics = parseSysml2Diagnostics(result.stderr, invocationFilePath);
+    const blockingDiagnostics = diagnostics.filter((diagnostic) => diagnostic.severity <= 2);
+    let semanticDocuments = result.stdout.trim() ? splitJsonDocuments(result.stdout) : [];
 
-  return {
-    valid: result.code === 0 && blockingDiagnostics.length === 0,
-    diagnostics,
-    backend: 'sysml2',
-    semanticDocuments,
-    exitCode: result.code,
-  };
+    diagnostics = rewriteOverlayDiagnostics(diagnostics, overlay);
+    semanticDocuments = rewriteOverlayDocuments(semanticDocuments, overlay);
+
+    return {
+      valid: result.code === 0 && blockingDiagnostics.length === 0,
+      diagnostics,
+      backend: 'sysml2',
+      semanticDocuments,
+      exitCode: result.code,
+    };
+  } finally {
+    if (overlay) {
+      await rm(overlay.overlayRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    }
+  }
 }
 
-export async function validateSysmlWithSysml2({ workspaceRoot, filePath, timeoutMs = 30_000 }) {
-  const analysis = await runSysml2Analysis({ workspaceRoot, filePath, timeoutMs });
+export async function validateSysmlWithSysml2({ workspaceRoot, filePath, text, timeoutMs = 30_000 }) {
+  const analysis = await runSysml2Analysis({ workspaceRoot, filePath, text, timeoutMs });
   return {
     valid: analysis.valid,
     diagnostics: analysis.diagnostics,

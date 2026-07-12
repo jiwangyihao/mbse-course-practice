@@ -59,6 +59,18 @@ describe('建模工作区 verify/yield 契约', () => {
     expect(verification.valid).toBe(true);
     expect(verification.checkedRules).toContain('sysml-v2-parser');
     expect(verification.diagnostics.filter((diagnostic) => diagnostic.severity === 'error')).toEqual([]);
+    expect(
+      verification.diagnostics,
+      '当工作区依赖 LSP 放行时，verify 必须保留 sysml2 失败的 warning，避免 UI 把它误显示成普通通过',
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: 'warning',
+          code: 'sysml2-fallback',
+          message: expect.stringMatching(/sysml2.*LSP/i),
+        }),
+      ]),
+    );
   }, 120_000);
 
   it('verify 返回可定位的 SysML parser 错误', async () => {
