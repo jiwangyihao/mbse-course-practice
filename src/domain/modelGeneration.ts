@@ -1345,11 +1345,8 @@ function buildSysmlText(confirmedData: ConfirmedTianwen2Data): string {
         continue;
       }
 
-      lines.push(`  satisfy ${toSysmlIdentifier(`${requirement.id}-${subsystem.id}`)} {`);
-      lines.push(`    subject ${toSysmlIdentifier(subsystem.id)};`);
-      lines.push(`    requirement ${toSysmlIdentifier(requirement.id)};`);
-      lines.push(`    doc /* ${requirement.id} 追溯到 ${subsystem.name}，形成满足关系。 */`);
-      lines.push('  }');
+      lines.push(`  doc /* ${requirement.id} 追溯到 ${subsystem.name}，形成满足关系。 */`);
+      lines.push(`  satisfy ${toSysmlIdentifier(requirement.id)} by ${toSysmlIdentifier(subsystem.id)};`);
       lines.push('');
     }
   }

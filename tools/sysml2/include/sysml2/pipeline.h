@@ -1,0 +1,220 @@
+/*
+ * SysML v2 Parser - Processing Pipeline
+ *
+ * Encapsulates the file parsing, import resolution, validation,
+ * and output generation pipeline.
+ *
+ * SPDX-License-Identifier: MIT
+ */
+
+#ifndef SYSML2_PIPELINE_H
+#define SYSML2_PIPELINE_H
+
+#include "common.h"
+#include "arena.h"
+#include "intern.h"
+#include "diagnostic.h"
+#include "ast.h"
+#include "cli.h"
+#include "import_resolver.h"
+#include "query.h"
+
+/*
+ * Pipeline Context - manages state for processing files
+ */
+typedef struct Sysml2PipelineContext {
+    Sysml2Arena *arena;
+    Sysml2Intern *intern;
+    Sysml2DiagContext *diag;
+    Sysml2ImportResolver *resolver;
+    const Sysml2CliOptions *options;
+} Sysml2PipelineContext;
+
+/*
+ * Create a pipeline context
+ *
+ * @param arena Memory arena (caller owns)
+ * @param intern String interning table (caller owns)
+ * @param options CLI options (caller owns)
+ * @return New pipeline context, or NULL on error
+ */
+Sysml2PipelineContext *sysml2_pipeline_create(
+    Sysml2Arena *arena,
+    Sysml2Intern *intern,
+    const Sysml2CliOptions *options
+);
+
+/*
+ * Destroy a pipeline context
+ *
+ * @param ctx Pipeline context to destroy
+ */
+void sysml2_pipeline_destroy(Sysml2PipelineContext *ctx);
+
+/*
+ * Process a single file
+ *
+ * Parses the file and optionally returns the model.
+ *
+ * @param ctx Pipeline context
+ * @param path Path to file
+ * @param out_model Output: parsed model (may be NULL if model not needed)
+ * @return SYSML2_OK on success, error code otherwise
+ */
+Sysml2Result sysml2_pipeline_process_file(
+    Sysml2PipelineContext *ctx,
+    const char *path,
+    SysmlSemanticModel **out_model
+);
+
+/*
+ * Process stdin
+ *
+ * Parses content from stdin and optionally returns the model.
+ *
+ * @param ctx Pipeline context
+ * @param out_model Output: parsed model (may be NULL if model not needed)
+ * @return SYSML2_OK on success, error code otherwise
+ */
+Sysml2Result sysml2_pipeline_process_stdin(
+    Sysml2PipelineContext *ctx,
+    SysmlSemanticModel **out_model
+);
+
+/*
+ * Process input content (shared implementation)
+ *
+ * @param ctx Pipeline context
+ * @param display_name Name to display in diagnostics (e.g., "<stdin>" or file path)
+ * @param content Input content
+ * @param content_length Content length in bytes
+ * @param out_model Output: parsed model (may be NULL if model not needed)
+ * @return SYSML2_OK on success, error code otherwise
+ */
+Sysml2Result sysml2_pipeline_process_input(
+    Sysml2PipelineContext *ctx,
+    const char *display_name,
+    const char *content,
+    size_t content_length,
+    SysmlSemanticModel **out_model
+);
+
+/*
+ * Resolve imports for all cached models
+ *
+ * @param ctx Pipeline context
+ * @return SYSML2_OK on success, error code otherwise
+ */
+Sysml2Result sysml2_pipeline_resolve_all(Sysml2PipelineContext *ctx);
+
+/*
+ * Run validation on all cached models
+ *
+ * @param ctx Pipeline context
+ * @return SYSML2_OK on success, error code otherwise
+ */
+Sysml2Result sysml2_pipeline_validate_all(Sysml2PipelineContext *ctx);
+
+/*
+ * Write model as JSON to output stream
+ *
+ * @param ctx Pipeline context
+ * @param model Model to write
+ * @param out Output stream
+ * @return SYSML2_OK on success, error code otherwise
+ */
+Sysml2Result sysml2_pipeline_write_json(
+    Sysml2PipelineContext *ctx,
+    SysmlSemanticModel *model,
+    FILE *out
+);
+
+/*
+ * Write model as SysML to output stream
+ *
+ * @param ctx Pipeline context
+ * @param model Model to write
+ * @param out Output stream
+ * @return SYSML2_OK on success, error code otherwise
+ */
+Sysml2Result sysml2_pipeline_write_sysml(
+    Sysml2PipelineContext *ctx,
+    SysmlSemanticModel *model,
+    FILE *out
+);
+
+/*
+ * Print diagnostics summary
+ *
+ * @param ctx Pipeline context
+ * @param output Output stream
+ */
+void sysml2_pipeline_print_diagnostics(Sysml2PipelineContext *ctx, FILE *output);
+
+/*
+ * Get diagnostic context from pipeline
+ *
+ * @param ctx Pipeline context
+ * @return Diagnostic context
+ */
+Sysml2DiagContext *sysml2_pipeline_get_diag(Sysml2PipelineContext *ctx);
+
+/*
+ * Get import resolver from pipeline
+ *
+ * @param ctx Pipeline context
+ * @return Import resolver
+ */
+Sysml2ImportResolver *sysml2_pipeline_get_resolver(Sysml2PipelineContext *ctx);
+
+/*
+ * Check if pipeline has errors
+ *
+ * @param ctx Pipeline context
+ * @return true if errors have been recorded
+ */
+bool sysml2_pipeline_has_errors(Sysml2PipelineContext *ctx);
+
+/*
+ * Get memory arena from pipeline
+ *
+ * @param ctx Pipeline context
+ * @return Memory arena
+ */
+Sysml2Arena *sysml2_pipeline_get_arena(Sysml2PipelineContext *ctx);
+
+/*
+ * Write query result as JSON to output stream
+ *
+ * @param ctx Pipeline context
+ * @param result Query result to write
+ * @param out Output stream
+ * @return SYSML2_OK on success, error code otherwise
+ */
+Sysml2Result sysml2_pipeline_write_query_json(
+    Sysml2PipelineContext *ctx,
+    const Sysml2QueryResult *result,
+    FILE *out
+);
+
+/*
+ * Write query result as SysML to output stream
+ *
+ * Includes parent package stubs for valid output.
+ *
+ * @param ctx Pipeline context
+ * @param result Query result to write
+ * @param models Source models (for looking up parent packages)
+ * @param model_count Number of models
+ * @param out Output stream
+ * @return SYSML2_OK on success, error code otherwise
+ */
+Sysml2Result sysml2_pipeline_write_query_sysml(
+    Sysml2PipelineContext *ctx,
+    const Sysml2QueryResult *result,
+    SysmlSemanticModel **models,
+    size_t model_count,
+    FILE *out
+);
+
+#endif /* SYSML2_PIPELINE_H */

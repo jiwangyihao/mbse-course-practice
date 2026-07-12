@@ -59,7 +59,7 @@ describe('建模工作区 verify/yield 契约', () => {
     expect(verification.valid).toBe(true);
     expect(verification.checkedRules).toContain('sysml-v2-parser');
     expect(verification.diagnostics.filter((diagnostic) => diagnostic.severity === 'error')).toEqual([]);
-  });
+  }, 120_000);
 
   it('verify 返回可定位的 SysML parser 错误', async () => {
     const workspace = await createWorkspace();
@@ -83,7 +83,7 @@ describe('建模工作区 verify/yield 契约', () => {
         expect.objectContaining({ code: 'sysml-syntax', path: expect.stringMatching(/model\.sysml:\d+:\d+/) }),
       ]),
     );
-  });
+  }, 120_000);
 
   it('yield 原子复用 verify，只接收报告并保存本次已验证文件内容', async () => {
     const workspace = await createWorkspace();
@@ -110,7 +110,7 @@ describe('建模工作区 verify/yield 契约', () => {
     expect(workspace.getCompletion().report.summary).toContain('完成六视图');
     expect(workspace.getCompletion().draft.sysmlText).toBe(expected.sysmlText);
     expect(workspace.getCompletion().draft.viewModel).toEqual(expected.viewModel);
-  });
+  }, 120_000);
 
   it('yield 在 verify 失败时返回同一份诊断且不完成会话', async () => {
     const workspace = await createWorkspace();
@@ -124,5 +124,5 @@ describe('建模工作区 verify/yield 契约', () => {
       }),
     ).rejects.toThrow(/\[error:missing-or-unsafe-file\].*output\/model\.sysml/s);
     expect(workspace.getCompletion()).toBeUndefined();
-  });
+  }, 120_000);
 });

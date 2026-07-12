@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import sysmlLsp from 'sysml-v2-lsp';
+import { Sysml2BackendUnavailableError, validateSysmlWithSysml2 } from './sysml2-backend.mjs';
 
 function encodeMessage(message) {
   const body = Buffer.from(JSON.stringify(message), 'utf8');
@@ -169,6 +170,7 @@ export async function validateSysmlWithLsp({ workspaceRoot, filePath, text, time
     return {
       valid: blockingDiagnostics.length === 0,
       diagnostics,
+      backend: 'sysml-lsp',
     };
   } catch (error) {
     return {
@@ -182,6 +184,7 @@ export async function validateSysmlWithLsp({ workspaceRoot, filePath, text, time
           column: 1,
         },
       ],
+      backend: 'sysml-lsp',
     };
   } finally {
     try {
@@ -208,4 +211,35 @@ export async function validateSysmlWithLsp({ workspaceRoot, filePath, text, time
       }
     }
   }
+}
+
+export async function validateSysml({ workspaceRoot, filePath, text, timeoutMs = 30_000 }) {
+  try {
+    const sysml2Validation = await validateSysmlWithSysml2({ workspaceRoot, filePath, text, timeoutMs });
+    if (sysml2Validation.valid) {
+      return sysml2Validation;
+    }
+  } catch (error) {
+    if (!(error instanceof Sysml2BackendUnavailableError)) {
+      return {
+        valid: false,
+        diagnostics: [
+          {
+            severity: 1,
+            message: `SysML parser/compiler 不可用或执行失败：${error instanceof Error ? error.message : String(error)}`,
+            source: 'sysml2',
+            line: 1,
+            column: 1,
+          },
+        ],
+        backend: 'sysml2',
+      };
+    }
+  }
+
+  const lspValidation = await validateSysmlWithLsp({ workspaceRoot, filePath, text, timeoutMs });
+  return {
+    ...lspValidation,
+    backend: lspValidation.backend ?? 'sysml-lsp',
+  };
 }

@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { validateViewModel } from '../src/domain/modelGeneration.ts';
-import { validateSysmlWithLsp } from './sysml-validator.mjs';
+import { validateSysml } from './sysml-validator.mjs';
 
 const REQUIRED_VIEW_KINDS = [
   'requirements',
@@ -100,7 +100,7 @@ async function verifyArtifactContents(confirmedData, sysmlText, rawViewModel, wo
     diagnostics.push(createDiagnostic('placeholder', OUTPUT_SYSML_PATH, 'SysML 中仍存在占位符或 TODO。', '替换为已确认事实。'));
   }
 
-  const sysmlValidation = await validateSysmlWithLsp({
+  const sysmlValidation = await validateSysml({
     workspaceRoot,
     filePath: path.join(workspaceRoot, OUTPUT_SYSML_PATH),
     text: sysmlText,

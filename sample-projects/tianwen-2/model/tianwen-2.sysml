@@ -118,52 +118,28 @@ package Tianwen2ConfirmedModel {
   }
 
 
-  satisfy REQ_TW2_001_spacecraft_platform {
-    subject spacecraft_platform;
-    requirement REQ_TW2_001;
-    doc /* REQ-TW2-001 追溯到 航天器平台，形成满足关系。 */
-  }
+  doc /* REQ-TW2-001 追溯到 航天器平台，形成满足关系。 */
+  satisfy REQ_TW2_001 by spacecraft_platform;
 
-  satisfy REQ_TW2_001_sampling_return {
-    subject sampling_return;
-    requirement REQ_TW2_001;
-    doc /* REQ-TW2-001 追溯到 采样返回分系统，形成满足关系。 */
-  }
+  doc /* REQ-TW2-001 追溯到 采样返回分系统，形成满足关系。 */
+  satisfy REQ_TW2_001 by sampling_return;
 
-  satisfy REQ_TW2_002_spacecraft_platform {
-    subject spacecraft_platform;
-    requirement REQ_TW2_002;
-    doc /* REQ-TW2-002 追溯到 航天器平台，形成满足关系。 */
-  }
+  doc /* REQ-TW2-002 追溯到 航天器平台，形成满足关系。 */
+  satisfy REQ_TW2_002 by spacecraft_platform;
 
-  satisfy REQ_TW2_002_power_thermal {
-    subject power_thermal;
-    requirement REQ_TW2_002;
-    doc /* REQ-TW2-002 追溯到 电源与热控分系统，形成满足关系。 */
-  }
+  doc /* REQ-TW2-002 追溯到 电源与热控分系统，形成满足关系。 */
+  satisfy REQ_TW2_002 by power_thermal;
 
-  satisfy REQ_TW2_002_gnc {
-    subject gnc;
-    requirement REQ_TW2_002;
-    doc /* REQ-TW2-002 追溯到 制导导航与控制分系统，形成满足关系。 */
-  }
+  doc /* REQ-TW2-002 追溯到 制导导航与控制分系统，形成满足关系。 */
+  satisfy REQ_TW2_002 by gnc;
 
-  satisfy REQ_TW2_003_ttc_communication {
-    subject ttc_communication;
-    requirement REQ_TW2_003;
-    doc /* REQ-TW2-003 追溯到 测控通信分系统，形成满足关系。 */
-  }
+  doc /* REQ-TW2-003 追溯到 测控通信分系统，形成满足关系。 */
+  satisfy REQ_TW2_003 by ttc_communication;
 
-  satisfy REQ_TW2_004_spacecraft_platform {
-    subject spacecraft_platform;
-    requirement REQ_TW2_004;
-    doc /* REQ-TW2-004 追溯到 航天器平台，形成满足关系。 */
-  }
+  doc /* REQ-TW2-004 追溯到 航天器平台，形成满足关系。 */
+  satisfy REQ_TW2_004 by spacecraft_platform;
 
-  satisfy REQ_TW2_004_ttc_communication {
-    subject ttc_communication;
-    requirement REQ_TW2_004;
-    doc /* REQ-TW2-004 追溯到 测控通信分系统，形成满足关系。 */
-  }
+  doc /* REQ-TW2-004 追溯到 测控通信分系统，形成满足关系。 */
+  satisfy REQ_TW2_004 by ttc_communication;
 
 }
