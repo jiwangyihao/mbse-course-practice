@@ -2,7 +2,7 @@
   "compilerOptions": {
     "target": "ES2022",
     "useDefineForClassFields": true,
-    "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "lib": ["DOM", "DOM.Iterable", "ES2024"],
     "allowJs": false,
     "skipLibCheck": true,
     "esModuleInterop": true,
@@ -17,5 +17,5 @@
     "jsx": "react-jsx",
     "types": ["vitest/globals"]
   },
-  "include": ["src", "tests", "sidecar/**/*.d.ts", "vite.config.ts", "vitest.config.ts"]
+  "include": ["src", "tests", "sidecar/**/*.d.ts", "sidecar/**/*.d.mts", "vite.config.ts", "vitest.config.ts"]
 }

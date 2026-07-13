@@ -50,28 +50,42 @@ fn preflight_agent_sidecar(
 }
 
 #[tauri::command]
-fn extract_agent_candidates(
+async fn extract_agent_candidates(
     app: tauri::AppHandle,
-    registry: tauri::State<'_, AgentSidecarRegistry>,
     source_text: String,
 ) -> Result<Value, String> {
-    let progress_app = app.clone();
-    registry.extract_candidates_with_progress(&source_text, move |event| {
-        let _ = progress_app.emit("agent-sidecar-event", event.clone());
+    let task_app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let registry = task_app.state::<AgentSidecarRegistry>();
+        let progress_app = task_app.clone();
+        registry.extract_candidates_with_progress(&source_text, move |event| {
+            let _ = progress_app.emit("agent-sidecar-event", event.clone());
+        })
     })
+    .await
+    .map_err(|error| format!("Agent 候选抽取后台任务执行失败：{error}"))?
 }
 
 #[tauri::command]
-fn generate_agent_model_draft(
+async fn generate_agent_model_draft(
     app: tauri::AppHandle,
-    registry: tauri::State<'_, AgentSidecarRegistry>,
     source_text: String,
     confirmed_data: Option<Value>,
 ) -> Result<Value, String> {
-    let progress_app = app.clone();
-    registry.generate_model_draft_with_progress(&source_text, confirmed_data, move |event| {
-        let _ = progress_app.emit("agent-sidecar-event", event.clone());
+    let task_app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let registry = task_app.state::<AgentSidecarRegistry>();
+        let progress_app = task_app.clone();
+        registry.generate_model_draft_with_progress(
+            &source_text,
+            confirmed_data,
+            move |event| {
+                let _ = progress_app.emit("agent-sidecar-event", event.clone());
+            },
+        )
     })
+    .await
+    .map_err(|error| format!("Agent 模型生成后台任务执行失败：{error}"))?
 }
 
 #[tauri::command]

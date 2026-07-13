@@ -18,7 +18,14 @@ output/behavior.sysml
 output/constraints.sysml
 ```
 
-只维护这组最终 SysML 源文件。需要临时文件时放到 `scratch/`，完成前自行删除。
+最终 SysML 只维护这组固定源文件。需要复用或保留的临时工件统一放到 `scratch/`，不要混入 `output/`。
+
+## 辅助脚本与临时工件
+
+- `eval` 只用于短小、增量、交互式的表达式或状态检查，不要在单次 `eval` 中内联长篇多行 Python。
+- 包含多个步骤、函数、复杂循环、多文件解析、批量转换或预计持续运行的 Python 等辅助脚本，应先用 `write` / `edit` 写入 `scratch/scripts/`，例如 `scratch/scripts/check_model.py`，再用短命令执行脚本文件。
+- 不要用自写 Python、JavaScript、正则或其他脚本复刻或替代 `verify` 的 SysML 语法、语义和派生视图校验。
+- 中间数据写入 `scratch/data/`，运行日志写入 `scratch/logs/`，分析笔记写入 `scratch/notes/`；可在 `scratch/` 下继续创建必要子目录，并在任务期间保留仍有诊断或复用价值的文件。
 
 ## SysML v2 文件约束
 
@@ -77,9 +84,9 @@ connection telemetryConnection connect source.telemetryOut to target.telemetryIn
 ## 推荐工作循环
 
 1. 阅读 `input/confirmed-data.json`、本规范、视图模型契约和 source set 示例。
-2. 创建或更新固定 SysML source set。
-3. 调用 `verify`。
-4. 按 `verify` 的路径化错误逐项修正，重复 2–3。
+2. 尽早把当前最好的一版 SysML 写入 `output/` 的固定源文件；当前版本可以不完整、缺文件或存在语法问题，不必先自行证明它满足全部条件。
+3. 直接调用 `verify` 获取权威的路径化诊断。`verify` 不是验收前置门槛，而是早期、反复使用的反馈工具。
+4. 按 `verify` 的错误逐项修正并持续落盘，重复 2–3；不要先写长 Python 脚本模拟校验。
 5. `verify` 通过后调用 `yield`，只提交执行记录报告。
 
 ## 外部规范入口

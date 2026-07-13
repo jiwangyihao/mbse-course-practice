@@ -5,13 +5,17 @@ import { fileURLToPath } from 'node:url';
 import { createAgentSession, discoverAuthStorage, ModelRegistry, SessionManager } from '@oh-my-pi/pi-coding-agent';
 import { defaultTianwen2ConfirmedData } from '../src/domain/modelGeneration.ts';
 import { generateTianwen2ModelArtifacts } from '../src/domain/modelGeneration.node.ts';
+import { createTraceCollector, forwardSdkSessionEvent, safeErrorMessage } from './agent-trace-protocol.mjs';
+import { emitSidecarFailure } from './agent-sdk-sidecar-failure.mjs';
+import { createAgentToolPolicyExtension, ensureRequiredToolsActive } from './agent-tool-policy.mjs';
+import { createCandidateVerificationGate } from './candidate-verification-tool.mjs';
+import { createCandidateWorkspace } from './candidate-workspace.mjs';
+import { buildExtractionPrompt, collectResearchedSourceUrls, reconcileExtractionDisclosures, validateExtractionDisclosures } from './extraction-task.mjs';
 import { createModelingWorkspace, modelingWorkspacePaths } from './modeling-workspace.mjs';
+import { buildWorkspaceModelingPrompt, WORKSPACE_EXECUTION_GUIDANCE } from './modeling-task.mjs';
+import { promptUntilSuccessfulYield } from './yield-termination.mjs';
 
-const EXTRACTION_OUTPUT_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    confirmedData: {
+const CONFIRMED_DATA_SCHEMA = {
       type: 'object',
       additionalProperties: false,
       properties: {
@@ -149,7 +153,12 @@ const EXTRACTION_OUTPUT_SCHEMA = {
         },
       },
       required: ['projectId', 'packageName', 'mission', 'requirements', 'subsystems', 'activities', 'interfaces', 'constraints', 'parameters', 'bindings'],
-    },
+};
+
+const EXTRACTION_OUTPUT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
     suggestions: {
       type: 'array',
       items: {
@@ -159,31 +168,54 @@ const EXTRACTION_OUTPUT_SCHEMA = {
           message: { type: 'string', minLength: 1 },
           recommendation: { type: 'string', minLength: 1 },
           severity: { enum: ['info', 'warning'] },
+          confidence: { enum: ['high', 'medium', 'low'] },
+          category: { enum: ['external-source', 'engineering-assumption', 'open-question'] },
+          sourceUrls: { type: 'array', items: { type: 'string', minLength: 1 } },
+          affectedElements: { type: 'array', minItems: 1, items: { type: 'string', minLength: 1 } },
         },
-        required: ['message', 'recommendation', 'severity'],
+        required: ['message', 'recommendation', 'severity', 'category', 'confidence', 'sourceUrls', 'affectedElements'],
       },
     },
   },
-  required: ['confirmedData', 'suggestions'],
+  required: ['suggestions'],
 };
 
 const BASE_SYSTEM_PROMPT = [
   '你是 MBSE 建模工作台的本地 Agent Sidecar。',
   '你必须通过 oh-my-pi SDK 的真实 Agent 会话工作。',
-  '你绝不能使用默认天问二号模板、占位字段、猜测性补齐或本地规则回退。',
+  '你绝不能把默认天问二号模板、占位字段、外部资料或未标注推断伪装成用户原文事实；任务允许的公开资料检索和显式建模假设必须保留依据。',
   '验证失败时必须继续修正或显式报告失败，绝不能把错误结果伪装为成功。',
   '严格遵守当前任务声明的 verify 与 yield 契约。',
 ].join('\n');
+export const DEFAULT_AGENT_MODEL_PATTERN = 'openai-codex/gpt-5.6-sol';
+
+
 
 function writeFrame(frame) {
   process.stdout.write(`${JSON.stringify(frame)}\n`);
 }
 
-function emitProgress(events, message, percent) {
-  const event = { type: 'progress', message, percent };
-  events.push(event);
-  writeFrame({ ok: true, event });
+function createLiveTrace(sessionId, provider, model) {
+  return createTraceCollector({
+    sessionId,
+    provider,
+    model,
+    emitFrame(event) {
+      writeFrame({ ok: true, event });
+    },
+  });
 }
+
+function buildTraceSession(trace, { sdkSessionId, provider, model, completedAt }) {
+  return {
+    sessionId: sdkSessionId,
+    provider,
+    model,
+    completedAt,
+    events: trace.events,
+  };
+}
+
 
 function uniqueStrings(values, label) {
   const seen = new Set();
@@ -315,36 +347,34 @@ function validateConfirmedData(confirmedData) {
   }
 }
 
-
-
-
-
-
-
-async function createSdkSession({
+export async function createSdkSession({
   outputSchema,
   systemPrompt,
   cwd,
   customTools,
   requireYieldTool = true,
+  extensions = [],
+  requiredToolNames = [],
   allBuiltInTools = false,
+  toolNames = [],
 }) {
   const authStorage = await discoverAuthStorage();
   const modelRegistry = new ModelRegistry(authStorage);
   await modelRegistry.refresh();
-  const requestedModelPattern = process.env.MBSE_AGENT_MODEL?.trim();
+  const requestedModelPattern = process.env.MBSE_AGENT_MODEL?.trim() || DEFAULT_AGENT_MODEL_PATTERN;
   const requestedThinkingLevel = process.env.MBSE_AGENT_THINKING_LEVEL?.trim();
   const { session, modelFallbackMessage } = await createAgentSession({
     cwd,
     authStorage,
     modelRegistry,
     sessionManager: SessionManager.inMemory(),
-    modelPattern: requestedModelPattern || undefined,
+    modelPattern: requestedModelPattern,
     thinkingLevel: requestedThinkingLevel || undefined,
     outputSchema,
     requireYieldTool,
-    toolNames: allBuiltInTools ? undefined : [],
+    toolNames: allBuiltInTools ? undefined : toolNames,
     customTools,
+    extensions,
     enableMCP: false,
     enableLsp: allBuiltInTools,
     skipPythonPreflight: !allBuiltInTools,
@@ -365,39 +395,83 @@ async function createSdkSession({
     throw new Error(`Sidecar 预检失败：未找到 ${provider}/${model} 的可用凭据。`);
   }
 
-  return { session, modelFallbackMessage };
-}
-
-function buildExtractionPrompt(sourceText) {
-  return [
-    '请从以下材料中提取 MBSE 建模确认候选。',
-    '必须只基于材料内容给出结果，不得补齐默认天问二号数据。',
-    '若材料不足以形成完整候选，请调用 yield 返回 error，明确指出缺失字段。',
-    '字段约束：mission 必须概括使命目标；requirements[].tracedTo 必须填写分系统名称；requirements[].parentId 与 subsystems[].parentId 仅在存在父元素时填写其稳定 ID，根元素填写 null；activities[].requirementIds、interfaces[].requirementIds 必须填写需求 ID；activities[].performedBy、interfaces[].sourceSubsystemId、interfaces[].targetSubsystemId、constraints[].relatedElementIds、parameters[].relatedElementIds、bindings[].relatedElementIds 必须填写分系统或元素 ID。',
-    'confirmedData 必须完整覆盖 requirements、subsystems、activities、interfaces、constraints、parameters、bindings；suggestions 请返回 1~3 条用户可执行修正建议。',
-    '',
-    '材料：',
-    sourceText,
-  ].join('\n');
-}
-
-
-
-async function runStructuredAgentTurn({ sourceText, confirmedData, outputSchema, systemPrompt, promptText }) {
-  const { session, modelFallbackMessage } = await createSdkSession({ outputSchema, systemPrompt });
-  let yieldDetails;
-  const unsubscribe = session.subscribe((event) => {
-    if (event.type === 'tool_execution_end' && event.toolName === 'yield' && event.isError !== true) {
-      const details = event.result?.details;
-      if (details && typeof details === 'object') {
-        yieldDetails = details;
-      }
+  let activeToolNames = typeof session.getActiveToolNames === 'function' ? session.getActiveToolNames() : [];
+  if (requiredToolNames.length > 0) {
+    try {
+      activeToolNames = await ensureRequiredToolsActive(session, requiredToolNames);
+    } catch (error) {
+      await session.dispose();
+      throw error;
     }
+  }
+
+  return { session, modelFallbackMessage, activeToolNames };
+}
+
+
+async function runStructuredAgentTurn({
+  sourceText,
+  outputSchema,
+  systemPrompt,
+  promptText,
+  phase,
+  phaseStep,
+  cwd,
+  customTools,
+  extensions = [],
+  requiredToolNames = [],
+  toolNames = [],
+  allBuiltInTools = false,
+}) {
+  const { session, modelFallbackMessage, activeToolNames } = await createSdkSession({
+    outputSchema,
+    systemPrompt,
+    cwd,
+    customTools,
+    extensions,
+    requiredToolNames,
+    toolNames,
+    allBuiltInTools,
   });
+  const trace = createLiveTrace(
+    session.sessionId,
+    session.model?.provider ?? 'unknown-provider',
+    session.model?.id ?? 'unknown-model',
+  );
+  trace.emitSessionStarted({
+    fallbackMessage: modelFallbackMessage ?? null,
+    activeToolNames,
+    requiredToolNames,
+  });
+  if (requiredToolNames.length > 0) {
+    trace.emitProgress(
+      `已确认本阶段必需工具可见：${requiredToolNames.join('、')}。`,
+      5,
+      phase,
+      { stage: 'required-tools-active', activeToolNames, requiredToolNames },
+    );
+  }
+  trace.emitPhase(phase, 'started', phaseStep, { fallbackMessage: modelFallbackMessage ?? null });
+
+  let yieldDetails;
 
   try {
-    await session.prompt(promptText);
-    await session.waitForIdle();
+    await promptUntilSuccessfulYield({
+      session,
+      promptText,
+      onEvent: (event) => {
+        const forwarded = forwardSdkSessionEvent(trace, event, phase);
+        if (
+          forwarded?.kind === 'tool-call-end'
+          && forwarded.toolName === 'yield'
+          && forwarded.isError !== true
+          && forwarded.yieldDetails
+          && typeof forwarded.yieldDetails === 'object'
+        ) {
+          yieldDetails = forwarded.yieldDetails;
+        }
+      },
+    });
 
     if (!yieldDetails || typeof yieldDetails !== 'object') {
       throw new Error('建模 Agent 未通过 yield 返回结构化结果。');
@@ -413,6 +487,7 @@ async function runStructuredAgentTurn({ sourceText, confirmedData, outputSchema,
     }
 
     return {
+      trace,
       data: yieldDetails.data,
       provider: session.model?.provider ?? 'unknown-provider',
       model: session.model?.id ?? 'unknown-model',
@@ -420,46 +495,67 @@ async function runStructuredAgentTurn({ sourceText, confirmedData, outputSchema,
       completedAt: new Date().toISOString(),
       modelFallbackMessage,
     };
+  } catch (error) {
+    emitSidecarFailure(trace, error, phase, `${phase}-failed`, { fallbackMessage: modelFallbackMessage ?? null });
+    throw error;
   } finally {
-    unsubscribe();
     await session.dispose();
   }
 }
 
-function buildWorkspaceModelingPrompt(confirmedData) {
-  return [
-    '在当前工作目录内完成最终 MBSE 工件。',
-    '先阅读 WORKSPACE.md、input/confirmed-data.json、references/ 下的规范、ADR 和示例。',
-    'input/confirmed-data.json 是唯一业务事实来源；示例只用于理解语法和数据结构。',
-    `必须创建并维护以下 SysML 源文件：${modelingWorkspacePaths.files.join('、')}。`,
-    `禁止创建 ${modelingWorkspacePaths.forbiddenViewModel}；JSON 视图模型由 verify/yield 从 strict sysml2 语义自动派生。`,
-    '你可以使用本会话开放的 OMP 内置工具自主探索、编写和修正文件，但应把工作限制在当前约定式工作目录。',
-    '完成初稿后调用 verify；根据每条路径化诊断迭代修正，直到 verify passed。',
-    '只有确信工作完全完成且 verify 已通过后才能调用 yield。',
-    `当前 projectId=${confirmedData.projectId}，packageName=${confirmedData.packageName}。`,
-  ].join('\n');
-}
 
 async function runWorkspaceModelingTurn({ sourceText, confirmedData }) {
   const workspace = await createModelingWorkspace({ confirmedData, sourceText });
+  const requiredToolNames = ['read', 'write', 'edit', 'verify', 'yield'];
   let session;
+  let trace;
+  let modelFallbackMessage = null;
   try {
     const created = await createSdkSession({
       outputSchema: undefined,
       systemPrompt: [
-        '所有最终工件都必须写入固定 SysML source set；不要在聊天或 yield 参数中回传完整工件。',
-        'verify 会逐个 SysML 文件执行 strict sysml2，并仅从语义结果派生 JSON 视图模型。',
-        '不要创建 output/view-model.json；该路径被视为违规输出。',
-        '你可以自主使用 OMP 内置工具阅读参考、编写文件、运行辅助命令和迭代修正。',
+        `所有最终工件都必须调用 write 写入 ${workspace.root} 下的固定 SysML source set；后续调用 edit 修改，不要在聊天或 yield 参数中回传完整工件。`,
+        'verify 已对本会话激活，可在 SysML 不完整、缺文件或有语法错误时随时调用；它会逐个固定 SysML 文件执行 strict sysml2，并从语义结果派生 JSON 视图模型。',
+        'verify 是早期、反复使用的权威反馈工具，不是最终验收前置门槛；不要用 Python/eval 复刻或替代它。',
+        `不要创建 ${path.join(workspace.root, 'output', 'view-model.json')}；该路径被视为违规输出。`,
+        'read、write、edit、verify、yield 均为本阶段必需工具；必须实际创建五个 SysML 文件后才能完成。',
+        WORKSPACE_EXECUTION_GUIDANCE,
       ].join('\n'),
       cwd: workspace.root,
       customTools: workspace.tools,
+      extensions: [createAgentToolPolicyExtension],
+      requiredToolNames,
       requireYieldTool: false,
       allBuiltInTools: true,
     });
     session = created.session;
-    await session.prompt(buildWorkspaceModelingPrompt(confirmedData));
-    await session.waitForIdle();
+    modelFallbackMessage = created.modelFallbackMessage ?? null;
+    trace = createLiveTrace(
+      session.sessionId,
+      session.model?.provider ?? 'unknown-provider',
+      session.model?.id ?? 'unknown-model',
+    );
+    trace.emitSessionStarted({
+      fallbackMessage: modelFallbackMessage,
+      activeToolNames: created.activeToolNames,
+      requiredToolNames,
+    });
+    trace.emitProgress('已确认 read、write、edit、verify、yield 对建模 Agent 可见；开始自主生成最终工件。', 20, 'model-draft', {
+      stage: 'workspace-ready',
+      activeToolNames: created.activeToolNames,
+      requiredToolNames,
+    });
+    trace.emitPhase('workspace', 'started', '工作区建模', { fallbackMessage: modelFallbackMessage });
+
+    const unsubscribe = session.subscribe((event) => {
+      forwardSdkSessionEvent(trace, event, 'model-draft');
+    });
+    try {
+      await session.prompt(buildWorkspaceModelingPrompt(confirmedData, workspace.root));
+      await session.waitForIdle();
+    } finally {
+      unsubscribe();
+    }
 
     const completion = workspace.getCompletion();
     if (!completion) {
@@ -467,13 +563,19 @@ async function runWorkspaceModelingTurn({ sourceText, confirmedData }) {
     }
 
     return {
+      trace,
       completion,
       provider: session.model?.provider ?? 'unknown-provider',
       model: session.model?.id ?? 'unknown-model',
       sdkSessionId: session.sessionId,
       completedAt: new Date().toISOString(),
-      modelFallbackMessage: created.modelFallbackMessage,
+      modelFallbackMessage,
     };
+  } catch (error) {
+    if (trace) {
+      emitSidecarFailure(trace, error, 'model-draft', 'model-draft-failed', { fallbackMessage: modelFallbackMessage });
+    }
+    throw error;
   } finally {
     const cleanupErrors = [];
     if (session) {
@@ -508,49 +610,89 @@ async function handleExtractCandidates(sourceText) {
   if (typeof sourceText !== 'string' || sourceText.trim() === '') {
     throw new Error('源材料不能为空。');
   }
-
-  const events = [];
-  emitProgress(events, 'SDK Agent Sidecar 已通过预检，开始抽取候选。', 15);
-  const result = await runStructuredAgentTurn({
-    sourceText,
-    confirmedData: null,
-    outputSchema: EXTRACTION_OUTPUT_SCHEMA,
-    systemPrompt: '你负责把课程材料提取为 confirmedData 候选。缺字段就失败，不得补齐默认数据；mission 来自使命目标摘要；requirements.tracedTo 使用分系统名称；parentId 在根元素处返回 null，其余引用字段遵循材料中的稳定 ID。',
-    promptText: buildExtractionPrompt(sourceText),
+  const candidateWorkspace = await createCandidateWorkspace(sourceText, CONFIRMED_DATA_SCHEMA);
+  const candidateVerification = createCandidateVerificationGate({
+    candidatePath: candidateWorkspace.candidatePath,
+    validateConfirmedData,
   });
-  emitProgress(events, '建模 Agent 已提交候选结果，正在执行确定性校验。', 75);
 
-  const payload = result.data;
-  const confirmedData = payload?.confirmedData;
-  validateConfirmedData(confirmedData);
+  let result;
+  try {
+    result = await runStructuredAgentTurn({
+      sourceText,
+      outputSchema: EXTRACTION_OUTPUT_SCHEMA,
+      systemPrompt: [
+        '你负责把叙述性课程材料深化为可供用户确认的完整 MBSE 候选，而不是逐字段格式转换。',
+        `唯一候选工件是绝对路径 ${candidateWorkspace.candidatePath}。检索结果和聊天内容都不是候选工件。`,
+        `必须调用 write 创建该文件，后续调用 edit/write 修正；verify_candidate 只接受空对象 {} 并读取该文件。`,
+        '候选文件通过 verify_candidate 且未再修改前，禁止调用 yield。完成时必须调用省略 type 的终止 yield，使用 result: { data: { suggestions: [...] } }；禁止 type 数组的非终止 section yield。终止 yield 成功后 Sidecar 会立即中断当前 Agent 会话。较长辅助脚本必须写入当前候选工作区 scratch/scripts/ 后用短命令执行。',
+        '本会话开放 OMP 内置工具，可自主检索可信公开资料，并以系统工程推理细化需求、结构、行为、接口、约束和追溯关系；稳定 ID 由你确定性生成。',
+        '公开资料、建模假设和待确认项必须按 suggestions 分类披露并标注置信度，external-source 只能引用本次会话成功网页搜索或读取结果中实际返回的 URL；不得复制默认模板或修改工作台源码。',
+      ].join('\n'),
+      promptText: buildExtractionPrompt(sourceText, candidateWorkspace.candidatePath),
+      cwd: candidateWorkspace.root,
+      customTools: [candidateVerification.tool],
+      extensions: [createAgentToolPolicyExtension, candidateVerification.createYieldGuardExtension],
+      requiredToolNames: ['read', 'write', 'edit', 'verify_candidate', 'yield'],
+      phase: 'extraction',
+      phaseStep: '候选抽取',
+      allBuiltInTools: true,
+    });
+    result.trace.emitProgress('建模 Agent 已提交候选结果，正在执行确定性校验。', 75, 'extraction', {
+      stage: 'deterministic-validation',
+    });
+    const payload = result.data;
+    const confirmedData = await candidateVerification.requireVerifiedCandidate();
+    const rawSuggestions = Array.isArray(payload?.suggestions) ? payload.suggestions : [];
+    const researchedSourceUrls = collectResearchedSourceUrls(result.trace.events);
+    const suggestions = reconcileExtractionDisclosures(rawSuggestions, researchedSourceUrls);
+    validateExtractionDisclosures(suggestions, researchedSourceUrls);
 
-  const extractionEvent = {
-    type: 'extraction',
-    message: '已通过 SDK Agent 完成候选抽取，并通过结构与引用校验。',
-    confirmedData,
-  };
-  events.push(extractionEvent);
-  writeFrame({ ok: true, event: extractionEvent });
+    result.trace.emit({
+      type: 'extraction',
+      phase: 'extraction',
+      rawKind: 'confirmed_data',
+      message: '已通过 SDK Agent 完成候选抽取，并通过结构与引用校验。',
+      payload: { confirmedData },
+      confirmedData,
+    });
 
-  for (const suggestion of Array.isArray(payload?.suggestions) ? payload.suggestions : []) {
-    const suggestionEvent = {
-      type: 'suggestion',
-      message: suggestion.message,
-      target: 'extraction',
-      recommendation: suggestion.recommendation,
-      severity: suggestion.severity,
-    };
-    events.push(suggestionEvent);
-    writeFrame({ ok: true, event: suggestionEvent });
+    for (const suggestion of suggestions) {
+      const sourceUrls = Array.isArray(suggestion.sourceUrls) ? suggestion.sourceUrls : [];
+      const affectedElements = Array.isArray(suggestion.affectedElements) ? suggestion.affectedElements : [];
+      const recommendation = [
+        suggestion.recommendation,
+        `置信度：${suggestion.confidence}`,
+        sourceUrls.length > 0 ? `来源：${sourceUrls.join('、')}` : null,
+        affectedElements.length > 0 ? `影响对象：${affectedElements.join('、')}` : null,
+      ].filter(Boolean).join('；');
+      result.trace.emit({
+        type: 'suggestion',
+        phase: 'extraction',
+        rawKind: 'suggestion',
+        message: suggestion.message,
+        payload: suggestion,
+        target: 'extraction',
+        category: suggestion.category,
+        confidence: suggestion.confidence,
+        sourceUrls,
+        affectedElements,
+        recommendation,
+        severity: suggestion.severity,
+      });
+    }
+
+    result.trace.emitPhase('extraction', 'completed', '候选抽取', { fallbackMessage: result.modelFallbackMessage ?? null });
+    result.trace.emitSessionFinished('success', result.completedAt, { fallbackMessage: result.modelFallbackMessage ?? null });
+    return buildTraceSession(result.trace, result);
+  } catch (error) {
+    if (result?.trace) {
+      emitSidecarFailure(result.trace, error, 'extraction', 'extraction-postprocess-failed');
+    }
+    throw error;
+  } finally {
+    await candidateWorkspace.dispose();
   }
-
-  return {
-    sessionId: result.sdkSessionId,
-    provider: result.provider,
-    model: result.model,
-    completedAt: result.completedAt,
-    events,
-  };
 }
 
 async function handleGenerateModelDraft(sourceText, confirmedData) {
@@ -559,45 +701,50 @@ async function handleGenerateModelDraft(sourceText, confirmedData) {
   }
   validateConfirmedData(confirmedData);
 
-  const events = [];
-  emitProgress(events, 'SDK Agent Sidecar 已创建建模工作区，开始自主生成最终工件。', 20);
-  const result = await runWorkspaceModelingTurn({ sourceText, confirmedData });
-  emitProgress(events, '建模 Agent 已通过工作区 verify 与 yield 门控。', 90);
+  let result;
+  try {
+    result = await runWorkspaceModelingTurn({ sourceText, confirmedData });
+    result.trace.emitProgress('建模 Agent 已通过工作区 verify 与 yield 门控。', 90, 'validation', {
+      stage: 'verified',
+    });
 
-  const validation = result.completion.draft.validation;
-  const draft = {
-    ...result.completion.draft,
-    provenance: {
-      mode: 'sdk-agent',
-      provider: result.provider,
-      model: result.model,
-      sdkSessionId: result.sdkSessionId,
-      completedAt: result.completedAt,
-      schemaOverridden: false,
-      validationSummary: {
-        valid: validation.valid,
-        errorCount: validation.errors.length,
-        findingCount: validation.findings.length,
+    const validation = result.completion.draft.validation;
+    const draft = {
+      ...result.completion.draft,
+      provenance: {
+        mode: 'sdk-agent',
+        provider: result.provider,
+        model: result.model,
+        sdkSessionId: result.sdkSessionId,
+        completedAt: result.completedAt,
+        schemaOverridden: false,
+        validationSummary: {
+          valid: validation.valid,
+          errorCount: validation.errors.length,
+          findingCount: validation.findings.length,
+        },
       },
-    },
-  };
+    };
 
-  const draftEvent = {
-    type: 'model-draft',
-    message: '已通过工作区 Agent 生成最终模型工件，并通过 verify/yield 原子门控。',
-    draft,
-    executionReport: result.completion.report,
-  };
-  events.push(draftEvent);
-  writeFrame({ ok: true, event: draftEvent });
-
-  return {
-    sessionId: result.sdkSessionId,
-    provider: result.provider,
-    model: result.model,
-    completedAt: result.completedAt,
-    events,
-  };
+    result.trace.emit({
+      type: 'model-draft',
+      phase: 'model-draft',
+      rawKind: 'model_draft',
+      message: '已通过工作区 Agent 生成最终模型工件，并通过 verify/yield 原子门控。',
+      payload: { draft, executionReport: result.completion.report ?? null },
+      draft,
+      executionReport: result.completion.report,
+    });
+    result.trace.emitPhase('workspace', 'completed', '工作区建模', { fallbackMessage: result.modelFallbackMessage ?? null });
+    result.trace.emitPhase('model-draft', 'completed', '最终工件生成', { fallbackMessage: result.modelFallbackMessage ?? null });
+    result.trace.emitSessionFinished('success', result.completedAt, { fallbackMessage: result.modelFallbackMessage ?? null });
+    return buildTraceSession(result.trace, result);
+  } catch (error) {
+    if (result?.trace) {
+      emitSidecarFailure(result.trace, error, 'model-draft', 'model-draft-postprocess-failed');
+    }
+    throw error;
+  }
 }
 
 async function handleVerifyWorkspaceFixture() {
@@ -670,7 +817,7 @@ async function main() {
         break;
       }
     } catch (error) {
-      writeFrame({ ok: false, error: error instanceof Error ? error.message : String(error) });
+      writeFrame({ ok: false, error: safeErrorMessage(error) });
     }
   }
 }

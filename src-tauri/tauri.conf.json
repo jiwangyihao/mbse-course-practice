@@ -27,6 +27,13 @@
     "active": true,
     "targets": "nsis",
     "icon": ["icons/icon.ico"],
+    "windows": {
+      "minimumWebview2Version": "119.0.0.0",
+      "webviewInstallMode": {
+        "type": "offlineInstaller",
+        "silent": true
+      }
+    },
     "externalBin": ["bin/mbse-agent-sidecar"],
     "resources": {
       "resources/mbse-sidecar/": "mbse-sidecar"

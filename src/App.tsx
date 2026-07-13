@@ -1,19 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import {
-  ApartmentOutlined,
-  DatabaseOutlined,
-  DesktopOutlined,
-  FileTextOutlined,
-  FolderOpenOutlined,
-  RocketOutlined,
-  SafetyCertificateOutlined,
-} from '@ant-design/icons';
-import { listen } from '@tauri-apps/api/event';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { FolderOpenOutlined, RocketOutlined } from '@ant-design/icons';
 import {
   Alert,
   Button,
   Card,
   Col,
+  Collapse,
   ConfigProvider,
   Descriptions,
   Flex,
@@ -28,7 +20,6 @@ import {
   Table,
   Tabs,
   Tag,
-  Tree,
   Typography,
   theme,
 } from 'antd';
@@ -45,6 +36,8 @@ import {
   type NodeProps,
 } from '@xyflow/react';
 import ELK, { type ElkNode } from 'elkjs/lib/elk.bundled';
+import AgentDraftReviewPanel from './AgentDraftReviewPanel';
+import AgentExecutionTrace from './AgentExecutionTrace';
 import { type ConfirmedTianwen2Data, type GeneratedView, type ModelGenerationResult } from './domain/modelGeneration';
 import { loadBundledTianwen2Project } from './domain/sampleProject';
 import { normalizeProjectExportBundle, type ProjectExportBundle } from './domain/projectExport';
@@ -52,12 +45,13 @@ import {
   createWorkbenchProjectState,
   findWorkbenchProjectResource,
   listWorkbenchProjectResources,
+  normalizeSavedWorkbenchProjectState,
   type SavedWorkbenchProjectState,
 } from './domain/workbenchProject';
 import { createWorkbenchPersistenceClient } from './domain/workbenchPersistence';
 import { workbenchEntry } from './domain/workbench';
-import { createAgentSidecarClient } from './domain/agentSidecar';
-import type { AgentModelingSession, AgentSidecarEvent, AgentSidecarStatus } from './domain/agentSidecar';
+import { createAgentSidecarClient, findLatestAgentEvent, type AgentModelingSession, type AgentSidecarStatus } from './domain/agentSidecar';
+import { useAgentTraceSessions } from './useAgentTraceSessions';
 const { Header, Sider, Content, Footer } = Layout;
 const { TextArea } = Input;
 const { Paragraph, Text, Title } = Typography;
@@ -78,22 +72,6 @@ type TauriRuntimeWindow = Window & {
 };
 
 
-const baseProjectResources = [
-  ...sampleProject.sourceMaterials.map((material) => ({
-    icon: <FileTextOutlined />,
-    id: material.id,
-    label: material.title,
-    kind: '源材料',
-    path: material.path,
-  })),
-  ...sampleProject.modelArtifacts.map((artifact) => ({
-    icon: artifact.kind === 'sysml-v2' ? <ApartmentOutlined /> : <DatabaseOutlined />,
-    id: artifact.id,
-    label: artifact.kind === 'json-view-model' ? '确认生成的视图模型 JSON 工件' : artifact.title,
-    kind: artifact.kind === 'sysml-v2' ? 'SysML v2' : '视图模型',
-    path: artifact.path,
-  })),
-];
 
 const artifactColumns = [
   {
@@ -139,6 +117,15 @@ const nextWorkflowSteps = [
   },
 ];
 
+const workspaceTabItems = [
+  { key: 'requirements', label: '需求视图' },
+  { key: 'bdd', label: 'BDD 结构视图' },
+  { key: 'activity', label: '活动图' },
+  { key: 'traceability', label: '需求追溯矩阵' },
+  { key: 'ibd', label: 'IBD 内部块图' },
+  { key: 'parameters', label: '参数约束视图' },
+];
+
 export default function App() {
   const [isImportOpen, setImportOpen] = useState(false);
   const [sourceText, setSourceText] = useState(initialSourceText);
@@ -147,18 +134,42 @@ export default function App() {
   const [selectedResourceId, setSelectedResourceId] = useState<string | null>(initialProjectResources[0]?.id ?? null);
   const [projectExport, setProjectExport] = useState<ProjectExportBundle | null>(() => initialSavedProject.lastExportedBundle ?? null);
   const generatedArtifacts = savedProject.generatedArtifacts;
+  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState('requirements');
   const [sidecarStatus, setSidecarStatus] = useState<AgentSidecarStatus>(initialSidecarStatus);
-  const [agentSession, setAgentSession] = useState<AgentModelingSession | null>(null);
   const [isAgentBusy, setAgentBusy] = useState(false);
   const [isProjectBusy, setProjectBusy] = useState(false);
   const [agentError, setAgentError] = useState<string | null>(null);
   const [projectError, setProjectError] = useState<string | null>(null);
-  const [liveAgentProgress, setLiveAgentProgress] = useState<AgentSidecarEvent | null>(null);
   const agentRequestToken = useRef(0);
   const isTauriDesktop = hasTauriRuntime();
+  const {
+    sessions: agentSessions,
+    latestProgress: latestAgentProgress,
+    replaceSessions,
+    mergeSessions,
+    resetSessions,
+    discardSessions,
+    beginLiveEventCapture,
+    endLiveEventCapture,
+    waitForListenerReady,
+  } = useAgentTraceSessions(isTauriDesktop);
+  const hasAgentSessions = agentSessions.length > 0;
+  const persistedAgentSessions = savedProject.agentTraceSessions ?? [];
+
+  function applySavedProject(nextProject: SavedWorkbenchProjectState) {
+    const normalizedProject = normalizeSavedWorkbenchProjectState(nextProject);
+    setSavedProject(normalizedProject);
+    setConfirmedData(normalizedProject.confirmedData);
+    setSourceText(normalizedProject.sourceMaterials[0]?.content ?? initialSourceText);
+    setProjectExport(normalizeProjectExportBundle(normalizedProject, normalizedProject.lastExportedBundle ?? null));
+    setSelectedResourceId((current) => {
+      const nextResources = listWorkbenchProjectResources(normalizedProject);
+      return nextResources.some((resource) => resource.id === current) ? current : (nextResources[0]?.id ?? null);
+    });
+  }
 
   useEffect(() => {
-    if (!hasTauriRuntime()) {
+    if (!isTauriDesktop) {
       return undefined;
     }
 
@@ -185,30 +196,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
-
-  function applySavedProject(nextProject: SavedWorkbenchProjectState) {
-    setSavedProject(nextProject);
-    setConfirmedData(nextProject.confirmedData);
-    setSourceText(nextProject.sourceMaterials[0]?.content ?? initialSourceText);
-    setProjectExport(normalizeProjectExportBundle(nextProject, nextProject.lastExportedBundle ?? null));
-    setSelectedResourceId((current) => {
-      const nextResources = listWorkbenchProjectResources(nextProject);
-      return nextResources.some((resource) => resource.id === current) ? current : (nextResources[0]?.id ?? null);
-    });
-  }
-
-  const latestAgentProgress = useMemo(() => {
-    if (liveAgentProgress?.type === 'progress') {
-      return liveAgentProgress;
-    }
-    if (!agentSession) {
-      return null;
-    }
-
-    return [...agentSession.events].reverse().find((event) => event.type === 'progress') ?? null;
-  }, [agentSession, liveAgentProgress]);
-
+  }, [isTauriDesktop]);
   useEffect(() => {
     if (!isTauriDesktop) {
       return undefined;
@@ -247,92 +235,21 @@ export default function App() {
       cancelled = true;
     };
   }, [isTauriDesktop]);
-  useEffect(() => {
-    if (!isTauriDesktop) {
-      return undefined;
-    }
-
-    let disposed = false;
-    let unlisten: (() => void) | undefined;
-
-    void listen<AgentSidecarEvent>('agent-sidecar-event', (event) => {
-      if (disposed) {
-        return;
-      }
-      if (event.payload.type === 'progress') {
-        setLiveAgentProgress(event.payload);
-      }
-    }).then((stopListening) => {
-      if (disposed) {
-        stopListening();
-        return;
-      }
-      unlisten = stopListening;
-    });
-
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
-  }, [isTauriDesktop]);
 
   function isMissingProjectError(error: unknown) {
     return error instanceof Error && error.message.includes('工作台项目状态文件不存在');
   }
 
-  const projectResources = useMemo(
-    () =>
-      listWorkbenchProjectResources(savedProject).map((resource) => ({
-        icon:
-          resource.kind === 'SysML v2'
-            ? <ApartmentOutlined />
-            : resource.kind === '视图模型'
-              ? <DatabaseOutlined />
-              : resource.kind === 'validation'
-                ? <SafetyCertificateOutlined />
-                : <FileTextOutlined />,
-        id: resource.id,
-        label: resource.title,
-        kind: resource.kind,
-        path: resource.path,
-      })),
-    [savedProject],
-  );
 
   const selectedProjectResource = useMemo(
     () => (selectedResourceId ? findWorkbenchProjectResource(savedProject, selectedResourceId) : undefined),
     [savedProject, selectedResourceId],
   );
 
-  const resourceTreeData = useMemo(
-    () => [
-      {
-        title: savedProject.manifest.name,
-        key: savedProject.manifest.id,
-        children: projectResources.map((resource) => ({
-          key: resource.id,
-          title: (
-            <Space orientation="vertical" size={2}>
-              <Space size={8} wrap>
-                <span className="resource-icon" aria-hidden="true">
-                  {resource.icon}
-                </span>
-                <Tag color="blue">{resource.kind}</Tag>
-                <Text strong>{resource.label}</Text>
-              </Space>
-              <Text type="secondary">{resource.path}</Text>
-            </Space>
-          ),
-        })),
-      },
-    ],
-    [projectResources, savedProject.manifest.id, savedProject.manifest.name],
-  );
 
   function openImportWizard() {
-    setAgentSession(null);
+    resetSessions();
     setConfirmedData(null);
-    setLiveAgentProgress(null);
     setAgentError(null);
     setProjectError(null);
     setImportOpen(true);
@@ -357,7 +274,7 @@ export default function App() {
         }
         hydratedProject = await workbenchPersistenceClient.saveProject(initialSavedProject);
       }
-      setAgentSession(null);
+      resetSessions();
       applySavedProject(hydratedProject);
     } catch (error) {
       setProjectError(error instanceof Error ? error.message : '内置样例项目加载失败。');
@@ -379,6 +296,7 @@ export default function App() {
   }
 
   async function stopAgentSidecar() {
+    endLiveEventCapture();
     setAgentBusy(true);
     setAgentError(null);
     try {
@@ -391,9 +309,10 @@ export default function App() {
   }
 
   function cancelAgentOperation() {
+    endLiveEventCapture();
     agentRequestToken.current += 1;
     setAgentBusy(false);
-    setAgentSession(null);
+    discardSessions();
     setConfirmedData(null);
     setAgentError('当前 SDK Agent 任务已取消；如果后台请求稍后返回，其结果会被忽略。');
     void agentSidecarClient.stop().then(setSidecarStatus).catch(() => undefined);
@@ -407,23 +326,30 @@ export default function App() {
 
   async function extractAgentCandidates() {
     const requestToken = ++agentRequestToken.current;
+    beginLiveEventCapture();
     setAgentBusy(true);
-    setLiveAgentProgress(null);
+    resetSessions();
     setAgentError(null);
     setConfirmedData(null);
     try {
+      await waitForListenerReady();
+      if (requestToken !== agentRequestToken.current) {
+        return;
+      }
       await ensureAgentSidecarRunning();
+      if (requestToken !== agentRequestToken.current) {
+        return;
+      }
       const session = await agentSidecarClient.extractCandidates(sourceText);
       if (requestToken !== agentRequestToken.current) {
         return;
       }
-      const extractionEvent = findAgentEvent(session.events, 'extraction');
+      replaceSessions(session);
+      const extractionEvent = findLatestAgentEvent([session], 'extraction');
       if (!extractionEvent) {
         setAgentError('SDK Agent 未返回可确认的抽取结果。');
-        setAgentSession(null);
         return;
       }
-      setAgentSession(session);
       setConfirmedData(extractionEvent.confirmedData);
     } catch (error) {
       if (requestToken === agentRequestToken.current) {
@@ -431,7 +357,7 @@ export default function App() {
       }
     } finally {
       if (requestToken === agentRequestToken.current) {
-        setLiveAgentProgress(null);
+        endLiveEventCapture();
         setAgentBusy(false);
       }
     }
@@ -457,15 +383,22 @@ export default function App() {
       setAgentError('拒绝保存未声明为 SysML source set 派生的模型工件。');
       return false;
     }
-    const nextProject = createWorkbenchProjectState(sampleProject, {
-      confirmedData: nextConfirmedData,
-      generatedArtifacts,
-      sidecarDraft: generatedArtifacts,
-      lastExportedBundle: null,
-      projectRoot: savedProject.projectRoot,
-      savedAt: savedProject.savedAt,
-      sourceText,
-    });
+    let nextProject: SavedWorkbenchProjectState;
+    try {
+      nextProject = createWorkbenchProjectState(sampleProject, {
+        confirmedData: nextConfirmedData,
+        generatedArtifacts,
+        sidecarDraft: generatedArtifacts,
+        agentTraceSessions: agentSessions,
+        lastExportedBundle: null,
+        projectRoot: savedProject.projectRoot,
+        savedAt: savedProject.savedAt,
+        sourceText,
+      });
+    } catch (error) {
+      setProjectError(error instanceof Error ? error.message : '工作台项目状态构建失败。');
+      return false;
+    }
 
     if (!isTauriDesktop) {
       applySavedProject(nextProject);
@@ -486,8 +419,8 @@ export default function App() {
   }
 
   async function confirmAgentOutput() {
-    const extractionEvent = agentSession ? findAgentEvent(agentSession.events, 'extraction') : undefined;
-    const draftEvent = agentSession ? findAgentEvent(agentSession.events, 'model-draft') : undefined;
+    const extractionEvent = findLatestAgentEvent(agentSessions, 'extraction');
+    const draftEvent = findLatestAgentEvent(agentSessions, 'model-draft');
 
     if (draftEvent) {
       const nextConfirmedData = confirmedData ?? extractionEvent?.confirmedData;
@@ -496,7 +429,7 @@ export default function App() {
         return;
       }
       if (await saveAgentGeneratedModel(nextConfirmedData, draftEvent.draft)) {
-        setAgentSession(null);
+        resetSessions();
         setConfirmedData(null);
         setImportOpen(false);
       }
@@ -509,14 +442,21 @@ export default function App() {
     }
 
     const requestToken = ++agentRequestToken.current;
+    beginLiveEventCapture();
     setAgentBusy(true);
-    setLiveAgentProgress(null);
     setAgentError(null);
     try {
+      await waitForListenerReady();
+      if (requestToken !== agentRequestToken.current) {
+        return;
+      }
       await ensureAgentSidecarRunning();
+      if (requestToken !== agentRequestToken.current) {
+        return;
+      }
       const nextSession = await agentSidecarClient.generateDraft(sourceText, confirmedData ?? extractionEvent.confirmedData);
       if (requestToken === agentRequestToken.current) {
-        setAgentSession(nextSession);
+        mergeSessions(nextSession);
       }
     } catch (error) {
       if (requestToken === agentRequestToken.current) {
@@ -524,13 +464,13 @@ export default function App() {
       }
     } finally {
       if (requestToken === agentRequestToken.current) {
-        setLiveAgentProgress(null);
+        endLiveEventCapture();
         setAgentBusy(false);
       }
     }
   }
 
-  async function exportSavedProject() {
+  const exportSavedProject = useCallback(async () => {
     if (!isTauriDesktop) {
       setProjectError('浏览器预览不支持真实导出；请在 Tauri 桌面壳内执行导出。');
       return;
@@ -545,12 +485,14 @@ export default function App() {
     } finally {
       setProjectBusy(false);
     }
-  }
+  }, [isTauriDesktop, savedProject.manifest.id]);
 
   function rejectAgentOutput() {
-    setAgentSession(null);
+    resetSessions();
     setConfirmedData(null);
   }
+  const reviewExtractionEvent = findLatestAgentEvent(agentSessions, 'extraction');
+  const reviewDraftEvent = findLatestAgentEvent(agentSessions, 'model-draft');
 
   return (
     <ConfigProvider
@@ -566,7 +508,7 @@ export default function App() {
     >
       <main className="workbench-shell" aria-labelledby="workbench-title">
         <Layout className="workbench-layout">
-          <Sider className="project-sider" width={360} theme="light" aria-label="项目资源树">
+          <Sider className="project-sider" width={360} theme="light" aria-label="项目侧栏">
             <Flex className="brand-block" gap={12} align="center">
               <div className="app-mark" aria-hidden="true">
                 MBSE
@@ -587,33 +529,6 @@ export default function App() {
               </Button>
             </Card>
 
-            <Card
-              size="small"
-              title="模型浏览器"
-              className="sider-card resource-card"
-              aria-label="模型工件资源树"
-            >
-              <Tree
-                className="resource-tree"
-                defaultExpandAll
-                selectedKeys={selectedResourceId ? [selectedResourceId] : []}
-                treeData={resourceTreeData}
-                onSelect={(keys) => setSelectedResourceId(typeof keys[0] === 'string' ? keys[0] : null)}
-              />
-            </Card>
-
-            <Alert
-              className="runtime-alert"
-              icon={<DesktopOutlined />}
-              title={isTauriDesktop ? 'Tauri 桌面壳已运行' : '当前运行于浏览器预览'}
-              description={
-                isTauriDesktop
-                  ? '当前工作台运行在 Tauri 桌面壳内，保存、加载与导出都由本地项目仓储边界提供。'
-                  : '当前界面运行于浏览器预览；真实保存、加载与导出需要在 Tauri 桌面壳内完成。'
-              }
-              type={isTauriDesktop ? 'success' : 'info'}
-              showIcon
-            />
             {projectError ? <Alert className="runtime-alert" type="error" showIcon title={projectError} /> : null}
 
             <Card size="small" title="Agent Sidecar 状态" className="sider-card sidecar-card">
@@ -648,7 +563,7 @@ export default function App() {
           <Layout className="workspace-layout">
             <Header className="workspace-header">
               <Flex justify="space-between" align="center" gap={24} wrap="wrap">
-                <div>
+                <div className="workspace-header-summary">
                   <Text className="section-eyebrow">项目工作区</Text>
                   <Title level={2} className="workspace-title">
                     {savedProject.manifest.name}
@@ -663,21 +578,47 @@ export default function App() {
                   </Button>
                 </Space>
               </Flex>
+              {generatedArtifacts ? (
+                <Flex className="workspace-header-model-row" justify="space-between" align="center" gap={16}>
+                  <Space wrap size={8} className="workspace-header-status" aria-label="模型生成状态">
+                    <Tag color="blue">已生成 {generatedArtifacts.viewModel.views.length} 个视图</Tag>
+                    <Tag color={generatedArtifacts.validation.valid ? 'success' : 'error'}>
+                      模型校验{generatedArtifacts.validation.valid ? '通过' : '未通过'}
+                    </Tag>
+                    <Tag color={generatedArtifacts.validation.errors.length === 0 ? 'success' : 'error'}>
+                      错误 {generatedArtifacts.validation.errors.length}
+                    </Tag>
+                    <Tag color={generatedArtifacts.validation.findings.length === 0 ? 'success' : 'warning'}>
+                      发现 {generatedArtifacts.validation.findings.length}
+                    </Tag>
+                  </Space>
+                  <nav className="workspace-header-navigation" aria-label="建模工作区视图导航">
+                    <Tabs
+                      activeKey={activeWorkspaceTab}
+                      className="workspace-header-tabs"
+                      items={workspaceTabItems}
+                      onChange={setActiveWorkspaceTab}
+                    />
+                  </nav>
+                </Flex>
+              ) : null}
             </Header>
 
             <Content
-              className="workspace-content"
+              className={generatedArtifacts ? 'workspace-content workspace-content-generated' : 'workspace-content'}
               aria-label={generatedArtifacts ? '项目建模工作区' : '项目工作区'}
             >
               {generatedArtifacts ? (
-                <WorkbenchStudio
+                <MemoizedWorkbenchStudio
                   artifacts={generatedArtifacts}
+                  activeWorkspaceTab={activeWorkspaceTab}
                   projectExport={projectExport}
                   selectedResource={selectedProjectResource}
                   onExport={exportSavedProject}
                   isExporting={isProjectBusy}
                   isPersistedProject={isTauriDesktop && Boolean(savedProject.projectRoot)}
                   hasSidecarDraft={Boolean(savedProject.sidecarDraft)}
+                  persistedAgentSessions={persistedAgentSessions}
                 />
               ) : (
                 <WorkbenchHome
@@ -685,6 +626,7 @@ export default function App() {
                   selectedResource={selectedProjectResource}
                   projectExport={projectExport}
                   onOpenSample={openBundledSampleProject}
+                  persistedAgentSessions={persistedAgentSessions}
                   onImport={openImportWizard}
                   onExport={exportSavedProject}
                   isExporting={isProjectBusy}
@@ -708,8 +650,35 @@ export default function App() {
       <Modal
         title="材料导入与确认向导"
         open={isImportOpen}
+        centered
+        className="import-modal"
+        classNames={{ body: 'import-modal-body' }}
         onCancel={() => setImportOpen(false)}
-        footer={null}
+        footer={(
+          <Flex className="import-modal-actions" justify="flex-end" align="center" gap={8} wrap="wrap">
+            {hasAgentSessions ? (
+              <>
+                <Button danger={isAgentBusy} onClick={isAgentBusy ? cancelAgentOperation : rejectAgentOutput}>
+                  {isAgentBusy ? '取消当前步骤' : '拒绝当前 Agent 结果'}
+                </Button>
+                <Button
+                  type="primary"
+                  onClick={confirmAgentOutput}
+                  disabled={isAgentBusy || (!reviewDraftEvent && !reviewExtractionEvent)}
+                >
+                  {reviewDraftEvent ? '确认 Agent 工件并保存到工作台' : '确认候选并生成最终模型工件'}
+                </Button>
+              </>
+            ) : (
+              <>
+                {isAgentBusy ? <Button danger onClick={cancelAgentOperation}>取消当前步骤</Button> : null}
+                <Button type="primary" onClick={extractAgentCandidates} loading={isAgentBusy}>
+                  抽取候选
+                </Button>
+              </>
+            )}
+          </Flex>
+        )}
         width={920}
         transitionName=""
         maskTransitionName=""
@@ -722,11 +691,8 @@ export default function App() {
             title="一次性确认向导"
             description="粘贴或使用内置天问二号材料，抽取结构化候选项；确认后生成模型工件并回到项目工作台。"
           />
-          {isAgentBusy && latestAgentProgress ? (
-            <Alert type="info" showIcon title={latestAgentProgress.message} description={`当前进度 ${latestAgentProgress.percent}%`} />
-          ) : null}
-          {agentSession ? (
-            <AgentDraftReview session={agentSession} onConfirm={confirmAgentOutput} onReject={rejectAgentOutput} />
+          {hasAgentSessions ? (
+            <AgentDraftReviewPanel sessions={agentSessions} busy={isAgentBusy} />
           ) : (
             <>
               <TextArea
@@ -735,12 +701,6 @@ export default function App() {
                 onChange={(event) => setSourceText(event.target.value)}
                 rows={7}
               />
-              <Space wrap>
-                <Button type="primary" onClick={extractAgentCandidates} loading={isAgentBusy}>
-                  抽取候选
-                </Button>
-                {isAgentBusy ? <Button danger onClick={cancelAgentOperation}>取消当前步骤</Button> : null}
-              </Space>
             </>
           )}
         </Space>
@@ -749,109 +709,6 @@ export default function App() {
   );
 }
 
-function AgentDraftReview({
-  session,
-  onConfirm,
-  onReject,
-}: {
-  session: AgentModelingSession;
-  onConfirm: () => void | Promise<void>;
-  onReject: () => void;
-}) {
-  const extractionEvent = findAgentEvent(session.events, 'extraction');
-  const draftEvent = findAgentEvent(session.events, 'model-draft');
-  const errorEvents = session.events.filter((event) => event.type === 'error');
-  const suggestionEvents = session.events.filter((event) => event.type === 'suggestion');
-
-  return (
-    <Space orientation="vertical" size={12} className="agent-draft-review">
-      <Alert
-        type="success"
-        showIcon
-        title={draftEvent ? 'SDK Agent 最终模型工件（待确认保存）' : 'SDK Agent 候选抽取结果（待确认）'}
-        description={
-          draftEvent
-            ? '当前 Sidecar 返回的是由 oh-my-pi SDK 管理的真实建模 Agent 工件；只有通过确定性校验后才允许保存。'
-            : '当前 Sidecar 返回的是由 oh-my-pi SDK 管理的真实建模 Agent 候选；请先确认候选，再生成最终模型工件。'
-        }
-      />
-      <Card size="small" title="结构化事件流">
-        <div className="agent-event-list">
-          {session.events.map((event, index) => (
-            <div className="agent-event-row" key={`${event.type}-${index}`}>
-              <Tag color={event.type === 'error' ? 'red' : event.type === 'suggestion' ? 'gold' : event.type === 'model-draft' ? 'green' : 'blue'}>{event.type}</Tag>
-              <Text>{event.type === 'suggestion' ? '修正建议已返回' : event.message}</Text>
-            </div>
-          ))}
-        </div>
-      </Card>
-      {extractionEvent ? (
-        <>
-          <Card size="small" title="候选使命">
-            <Paragraph>{extractionEvent.confirmedData.mission}</Paragraph>
-          </Card>
-          <Card size="small" title="候选需求">
-            <div className="candidate-list">
-              {extractionEvent.confirmedData.requirements.map((requirement) => (
-                <div className="candidate-row" key={requirement.id}>
-                  <Text code>{requirement.id}</Text>
-                  <Text strong>{requirement.title}</Text>
-                </div>
-              ))}
-            </div>
-          </Card>
-          <Card size="small" title="候选分系统">
-            <Space wrap>
-              {extractionEvent.confirmedData.subsystems.map((subsystem) => (
-                <Tag key={subsystem.id}>{subsystem.name}</Tag>
-              ))}
-            </Space>
-          </Card>
-        </>
-      ) : null}
-      {draftEvent ? (
-        <Card size="small" title="SDK Agent 最终模型摘要">
-          <Descriptions
-            bordered
-            size="small"
-            column={1}
-            items={[
-              { key: 'provider', label: 'provider', children: draftEvent.draft.provenance?.provider ?? session.provider ?? 'unknown' },
-              { key: 'model', label: 'model', children: draftEvent.draft.provenance?.model ?? session.model ?? 'unknown' },
-              { key: 'sdkSessionId', label: 'SDK sessionId', children: draftEvent.draft.provenance?.sdkSessionId ?? session.sessionId },
-              { key: 'completedAt', label: '完成时间', children: draftEvent.draft.provenance?.completedAt ?? session.completedAt ?? 'unknown' },
-              { key: 'sysml', label: 'SysML 源文件', children: `${draftEvent.draft.sourceSet.files.length} 个文件` },
-              { key: 'views', label: '视图模型', children: `${draftEvent.draft.viewModel.views.length} 个视图` },
-              { key: 'validation', label: '确定性校验', children: draftEvent.draft.validation.valid ? '通过' : '失败' },
-            ]}
-          />
-        </Card>
-      ) : null}
-      {suggestionEvents.length > 0 ? (
-        <Card size="small" title="修正建议">
-          <div className="candidate-list">
-            {suggestionEvents.map((event, index) => (
-              <div className="candidate-row" key={`${event.type}-${index}`}>
-                <Tag color={event.severity === 'warning' ? 'gold' : 'blue'}>{event.target}</Tag>
-                <Tag color={event.severity === 'warning' ? 'gold' : 'blue'}>{event.severity}</Tag>
-                <Text>{event.recommendation}</Text>
-              </div>
-            ))}
-          </div>
-        </Card>
-      ) : null}
-      {errorEvents.map((event, index) => (
-        <Alert key={index} type="warning" showIcon title={event.message} />
-      ))}
-      <Space wrap>
-        <Button onClick={onReject}>拒绝当前 Agent 结果</Button>
-        <Button type="primary" onClick={onConfirm} disabled={!draftEvent && !extractionEvent}>
-          {draftEvent ? '确认 Agent 工件并保存到工作台' : '确认候选并生成最终模型工件'}
-        </Button>
-      </Space>
-    </Space>
-  );
-}
 
 function WorkbenchHome({
   savedProject,
@@ -862,6 +719,7 @@ function WorkbenchHome({
   onExport,
   isExporting,
   isPersistedProject,
+  persistedAgentSessions,
 }: {
   savedProject: SavedWorkbenchProjectState;
   selectedResource?: { title: string; kind: string; path: string; mediaType: string; content: string };
@@ -871,6 +729,7 @@ function WorkbenchHome({
   onExport: () => void | Promise<void>;
   isExporting: boolean;
   isPersistedProject: boolean;
+  persistedAgentSessions: AgentModelingSession[];
 }) {
   return (
     <section className="workbench-home" aria-label="项目工作区首页">
@@ -892,6 +751,7 @@ function WorkbenchHome({
             <ProjectOverviewSection savedProject={savedProject} isPersistedProject={isPersistedProject} />
             <ResourcePreviewSection selectedResource={selectedResource} />
             <ProjectExportSection projectExport={projectExport} onExport={onExport} isExporting={isExporting} />
+            <AgentTraceSection sessions={persistedAgentSessions} />
           </WorkbenchInspectorPanel>
         </aside>
       </div>
@@ -901,13 +761,16 @@ function WorkbenchHome({
 
 function WorkbenchStudio({
   artifacts,
+  activeWorkspaceTab,
   projectExport,
   selectedResource,
   onExport,
   isExporting,
   isPersistedProject,
   hasSidecarDraft,
+  persistedAgentSessions,
 }: {
+  activeWorkspaceTab: string;
   artifacts: ModelGenerationResult;
   projectExport: ProjectExportBundle | null;
   selectedResource?: { title: string; kind: string; path: string; mediaType: string; content: string };
@@ -915,8 +778,8 @@ function WorkbenchStudio({
   isExporting: boolean;
   isPersistedProject: boolean;
   hasSidecarDraft: boolean;
+  persistedAgentSessions: AgentModelingSession[];
 }) {
-  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState('requirements');
   const requirementView = artifacts.viewModel.views.find((view) => view.kind === 'requirements');
   const bddView = artifacts.viewModel.views.find((view) => view.kind === 'bdd');
   const ibdView = artifacts.viewModel.views.find((view) => view.kind === 'ibd');
@@ -932,68 +795,45 @@ function WorkbenchStudio({
           <ValidationSummarySection artifacts={artifacts} isPersistedProject={isPersistedProject} hasSidecarDraft={hasSidecarDraft} />
           <ResourcePreviewSection selectedResource={selectedResource} />
           <ProjectExportSection projectExport={projectExport} onExport={onExport} isExporting={isExporting} />
+          <AgentTraceSection sessions={persistedAgentSessions} />
         </WorkbenchInspectorPanel>
       </aside>
     </div>
   );
 
+  function renderWorkspaceView(tabKey: string) {
+    switch (tabKey) {
+      case 'bdd':
+        return renderModelView(bddView, 'BDD 结构视图');
+      case 'activity':
+        return renderModelView(activityView, '活动图');
+      case 'traceability':
+        return traceabilityMatrixView
+          ? <TraceabilityMatrixCard view={traceabilityMatrixView} findings={artifacts.validation.findings} />
+          : renderModelView(undefined, '需求追溯矩阵');
+      case 'ibd':
+        return renderModelView(ibdView, 'IBD 内部块图');
+      case 'parameters':
+        return parameterConstraintsView
+          ? <ParameterConstraintCard view={parameterConstraintsView} />
+          : renderModelView(undefined, '参数约束视图');
+      default:
+        return renderModelView(requirementView, '需求视图');
+    }
+  }
+
+  const activeWorkspaceTabLabel = workspaceTabItems.find((item) => item.key === activeWorkspaceTab)?.label ?? '模型视图';
+
   return (
     <section className="generated-workspace" aria-label="MBSE 建模工作区">
-      <Flex className="generated-workspace-header" justify="space-between" align="flex-start" gap={16} wrap="wrap">
-        <div>
-          <Text className="section-eyebrow">模型工作区</Text>
-          <Title level={3} className="generated-workspace-title">
-            MBSE 建模工作区
-          </Title>
-          <Text type="secondary" className="generated-workspace-subtitle">
-            {isPersistedProject
-              ? '当前工作台展示最近一次已保存的 SDK Agent 模型工件；最终 SysML/JSON 直接来自通过确定性校验的 Agent 结果。'
-              : '当前工作台展示浏览器内存中的未保存 Agent 预览；需要在 Tauri 桌面壳内保存后才构成已保存项目。'}
-          </Text>
-        </div>
-        <Space wrap size={8} className="generated-workspace-status" aria-label="模型生成状态">
-          <Tag color="blue">已生成 {artifacts.viewModel.views.length} 个视图</Tag>
-          <Tag color={artifacts.validation.valid ? 'success' : 'error'}>模型校验{artifacts.validation.valid ? '通过' : '未通过'}</Tag>
-          <Tag color={artifacts.validation.errors.length === 0 ? 'success' : 'error'}>错误 {artifacts.validation.errors.length}</Tag>
-          <Tag color={artifacts.validation.findings.length === 0 ? 'success' : 'warning'}>发现 {artifacts.validation.findings.length}</Tag>
-        </Space>
-      </Flex>
-
-      <nav className="generated-workspace-navigation" aria-label="建模工作区视图导航">
-        <Tabs
-          activeKey={activeWorkspaceTab}
-          className="generated-workspace-tabs"
-          destroyOnHidden
-          items={[
-            { key: 'requirements', label: '需求视图', children: renderStudioPanel(renderModelView(requirementView, '需求视图')) },
-            { key: 'bdd', label: 'BDD 结构视图', children: renderStudioPanel(renderModelView(bddView, 'BDD 结构视图')) },
-            { key: 'activity', label: '活动图', children: renderStudioPanel(renderModelView(activityView, '活动图')) },
-            {
-              key: 'traceability',
-              label: '需求追溯矩阵',
-              children: renderStudioPanel(
-                traceabilityMatrixView
-                  ? <TraceabilityMatrixCard view={traceabilityMatrixView} findings={artifacts.validation.findings} />
-                  : renderModelView(undefined, '需求追溯矩阵'),
-              ),
-            },
-            { key: 'ibd', label: 'IBD 内部块图', children: renderStudioPanel(renderModelView(ibdView, 'IBD 内部块图')) },
-            {
-              key: 'parameters',
-              label: '参数约束视图',
-              children: renderStudioPanel(
-                parameterConstraintsView
-                  ? <ParameterConstraintCard view={parameterConstraintsView} />
-                  : renderModelView(undefined, '参数约束视图'),
-              ),
-            },
-          ]}
-          onChange={setActiveWorkspaceTab}
-        />
-      </nav>
+      <div className="workspace-active-tab-panel" role="tabpanel" aria-label={activeWorkspaceTabLabel}>
+        {renderStudioPanel(renderWorkspaceView(activeWorkspaceTab))}
+      </div>
     </section>
   );
 }
+
+const MemoizedWorkbenchStudio = memo(WorkbenchStudio);
 
 function renderModelView(view: GeneratedView | undefined, label: string) {
   return view ? (
@@ -1180,6 +1020,25 @@ function ProjectExportSection({
       ) : (
         <Alert type="info" showIcon title="尚无导出记录" description="导出属于次级动作；只有成功执行导出后，才会在这里显示最近一次导出状态。" />
       )}
+    </section>
+  );
+}
+
+function AgentTraceSection({ sessions }: { sessions: AgentModelingSession[] }) {
+  if (sessions.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className="inspector-section" aria-label="已保存的 Agent 执行轨迹">
+      <Collapse
+        size="small"
+        items={[{
+          key: 'saved-agent-trace',
+          label: '已保存的 Agent 执行轨迹',
+          children: <AgentExecutionTrace sessions={sessions} busy={false} embedded />,
+        }]}
+      />
     </section>
   );
 }
@@ -1551,12 +1410,6 @@ function TraceabilityMatrixCard({
   );
 }
 
-function findAgentEvent<TType extends AgentSidecarEvent['type']>(
-  events: AgentSidecarEvent[],
-  type: TType,
-): Extract<AgentSidecarEvent, { type: TType }> | undefined {
-  return events.find((event): event is Extract<AgentSidecarEvent, { type: TType }> => event.type === type);
-}
 
 function isSameSidecarStatus(left: AgentSidecarStatus, right: AgentSidecarStatus) {
   return left.state === right.state && left.pid === right.pid && left.endpoint === right.endpoint && left.message === right.message;

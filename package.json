@@ -28,6 +28,8 @@
     "elkjs": "^0.10.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "sysml-v2-lsp": "^0.23.0",
     "tree-sitter": "^0.21.1",
     "tree-sitter-sysml": "^0.1.0",

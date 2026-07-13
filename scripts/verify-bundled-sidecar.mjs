@@ -67,8 +67,18 @@ async function sendRequest(io, closePromise, payload, timeoutMs = 120_000) {
   return await Promise.race([responsePromise, timeoutPromise, closedPromise]);
 }
 
+async function assertBundledReferenceLayout(resourceRoot) {
+  await Promise.all([
+    stat(path.join(resourceRoot, 'references', 'example-source-set', 'model.sysml')),
+    stat(path.join(resourceRoot, 'references', 'example-source-set', 'requirements.sysml')),
+    stat(path.join(resourceRoot, 'references', 'example-source-set', 'structure.sysml')),
+    stat(path.join(resourceRoot, 'references', 'example-source-set', 'behavior.sysml')),
+    stat(path.join(resourceRoot, 'references', 'example-source-set', 'constraints.sysml')),
+    stat(path.join(resourceRoot, 'references', 'example-derived-view-model.json')),
+  ]);
+}
 export async function verifyBundledSidecar({ sidecarPath, resourceRoot, sysml2Path }) {
-  await Promise.all([stat(sidecarPath), stat(resourceRoot), stat(sysml2Path)]);
+  await Promise.all([stat(sidecarPath), stat(resourceRoot), stat(sysml2Path), assertBundledReferenceLayout(resourceRoot)]);
   const sandboxRoot = await mkdtemp(path.join(os.tmpdir(), 'mbse-bundled-sidecar-'));
   const sandboxSidecarPath = path.join(sandboxRoot, path.basename(sidecarPath));
   const sandboxResourceRoot = path.join(sandboxRoot, 'resources', 'mbse-sidecar');

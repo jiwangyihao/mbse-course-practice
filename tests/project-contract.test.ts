@@ -7,9 +7,10 @@ import { vi } from 'vitest';
 import { defaultTianwen2ConfirmedData, extractTianwen2ConfirmedData, validateViewModel, type ModelGenerationResult } from '../src/domain/modelGeneration';
 import { generateTianwen2ModelArtifacts } from '../src/domain/modelGeneration.node';
 import { buildProjectExportBundle, type ProjectExportArtifact } from '../src/domain/projectExport';
-import { createWorkbenchProjectState, listWorkbenchProjectResources } from '../src/domain/workbenchProject';
+import { createWorkbenchProjectState, listWorkbenchProjectResources, normalizeSavedWorkbenchProjectState } from '../src/domain/workbenchProject';
 import { loadBundledTianwen2Project } from '../src/domain/sampleProject';
 import App from '../src/App';
+import type { AgentModelingSession } from '../src/domain/agentSidecar';
 
 const tauriInvokeMock = vi.hoisted(() => vi.fn());
 
@@ -67,7 +68,7 @@ function withSdkProvenance(draft: ModelGenerationResult, sessionId: string) {
   };
 }
 
-const runtimePoisonToken = 'UI_RUNTIME_POISON_SHOULD_NOT_APPEAR_IN_DELIVERY_PACKAGE';
+const runtimePoisonToken = 'UI_RUNTIME_POISON_SHOULD_NOT_APPEAR_IN_PROJECT_PACKAGE';
 
 const repoRoot = normalize(process.cwd());
 const packageJsonPath = resolve(repoRoot, 'package.json');
@@ -472,6 +473,77 @@ describe('天问二号样例项目端到端契约', () => {
       sidecarDraft.sourceSet.files.map((file) => `sample-projects/tianwen-2/sidecar/agent-model-draft/${file.path}`).sort(),
     );
   });
+  it('加载旧 sidecar 草案状态时从已持久化 SysML 文件补齐 source set', async () => {
+    const sampleProject = loadBundledTianwen2Project();
+    const completeDraft = withSdkProvenance(await generateTianwen2ModelArtifacts(defaultTianwen2ConfirmedData), 'legacy-sidecar-draft-session');
+    const persistedState = createWorkbenchProjectState(sampleProject, { sidecarDraft: completeDraft });
+    const incompleteDraft = JSON.parse(JSON.stringify(completeDraft)) as Omit<ModelGenerationResult, 'sourceSet'>;
+    delete (incompleteDraft as { sourceSet?: unknown }).sourceSet;
+    const legacyState = {
+      ...persistedState,
+      sidecarDraft: incompleteDraft as unknown as ModelGenerationResult,
+    };
+
+    const normalizedState = normalizeSavedWorkbenchProjectState(legacyState);
+
+    expect(normalizedState.sidecarDraft?.sourceSet.files.map((file) => file.path).sort()).toEqual(
+      completeDraft.sourceSet.files.map((file) => file.path).sort(),
+    );
+    expect(
+      listWorkbenchProjectResources(normalizedState)
+        .filter((resource) => resource.kind === 'Sidecar 草案' && resource.mediaType === 'text/x-sysml')
+        .map((resource) => resource.path)
+        .sort(),
+    ).toEqual(
+      completeDraft.sourceSet.files.map((file) => `sample-projects/tianwen-2/sidecar/agent-model-draft/${file.path}`).sort(),
+    );
+  });
+
+  it('加载缺少 source set 且无持久化 SysML 文件的旧 sidecar 草案时丢弃该草案', async () => {
+    const sampleProject = loadBundledTianwen2Project();
+    const completeDraft = withSdkProvenance(await generateTianwen2ModelArtifacts(defaultTianwen2ConfirmedData), 'legacy-sidecar-drop-session');
+    const persistedState = createWorkbenchProjectState(sampleProject, { sidecarDraft: completeDraft });
+    const incompleteDraft = JSON.parse(JSON.stringify(completeDraft)) as Omit<ModelGenerationResult, 'sourceSet'>;
+    delete (incompleteDraft as { sourceSet?: unknown }).sourceSet;
+    const legacyState = {
+      ...persistedState,
+      sidecarDraft: incompleteDraft as unknown as ModelGenerationResult,
+      files: persistedState.files.filter((file) => !/sample-projects\/tianwen-2\/sidecar\/agent-model-draft(?:\/|\.sysml$)/.test(file.path)),
+    };
+
+    const normalizedState = normalizeSavedWorkbenchProjectState(legacyState);
+
+    expect(normalizedState.sidecarDraft).toBeNull();
+  });
+  it('保存项目时将 Agent 执行轨迹会话持久化为可重载 JSON', async () => {
+    const sampleProject = loadBundledTianwen2Project();
+    const traceSessions: AgentModelingSession[] = [{
+      sessionId: 'persisted-trace-session',
+      provider: 'test-provider',
+      model: 'test-model',
+      completedAt: '2026-07-13T00:00:00.000Z',
+      events: [{
+        protocolVersion: 'mbse-agent-trace.v1',
+        sessionId: 'persisted-trace-session',
+        sequence: 1,
+        timestamp: '2026-07-13T00:00:00.000Z',
+        phase: 'model-draft',
+        type: 'reasoning-start',
+        rawKind: 'thinking_start',
+        message: '模型进入 reasoning 阶段。',
+        payload: { type: 'message_update', assistantMessageEvent: { type: 'thinking_start', contentIndex: 0 } },
+        contentIndex: 0,
+      }],
+    }];
+    const savedProject = createWorkbenchProjectState(sampleProject, { agentTraceSessions: traceSessions });
+
+    const traceFile = savedProject.files.find((file) => file.path === 'sample-projects/tianwen-2/sidecar/agent-trace-sessions.json');
+    expect(traceFile, '保存项目时必须把 Agent 执行轨迹会话写入 sidecar 目录').toBeDefined();
+    expect(JSON.parse(traceFile?.content ?? 'null')).toEqual(traceSessions);
+
+    const resource = listWorkbenchProjectResources(savedProject).find((entry) => entry.path === 'sample-projects/tianwen-2/sidecar/agent-trace-sessions.json');
+    expect(resource?.kind, '工作台资源树必须暴露已持久化的 Agent 轨迹资源').toBe('Agent 轨迹');
+  });
 
   it('issue #8 tracer：项目导出只读取已保存的天问二号项目状态', () => {
     const persistedSnapshot = createPersistedTianwen2ProjectSnapshot();
@@ -482,28 +554,17 @@ describe('天问二号样例项目端到端契约', () => {
     expect(projectExport.source, '导出 seam 必须声明只消费 persisted project state').toBe('persisted-project-state');
     expect(JSON.stringify(projectExport), '导出 bundle 不得读取或泄漏未传入的 UI runtime/generatedArtifacts 状态').not.toContain(runtimePoisonToken);
 
-    expect(projectExport.artifacts.length, '项目导出至少应覆盖源码、桌面应用、项目快照、模型、校验与清单').toBeGreaterThanOrEqual(7);
+    expect(projectExport.artifacts, '项目包必须覆盖项目内容、完整模型、校验结果与导出清单').toHaveLength(9);
     expect(
-      projectExport.artifacts.filter((artifact) => artifact.status === 'missing').map((artifact) => artifact.type),
-      '计划态不得把尚未复制的源码工程或桌面应用冒充为已导出工件。',
-    ).toEqual(expect.arrayContaining(['source-code', 'desktop-app']));
-
-    const sourceCodeArtifact = expectRequiredExportArtifact(projectExport.artifacts, {
-      id: 'tw2-source-code',
-      type: 'source-code',
-      path: /source[\/]mbse-workbench$/,
-      title: /源码|source/i,
-      source: /sample-projects[\/]tianwen-2[\/]project\.json$/,
-      status: 'missing',
-    });
-    const desktopAppArtifact = expectRequiredExportArtifact(projectExport.artifacts, {
-      id: 'tw2-desktop-app',
-      type: 'desktop-app',
-      path: /runnable[\/]mbse-workbench\.exe$/,
-      title: /桌面应用|desktop/i,
-      source: /sample-projects[\/]tianwen-2[\/]project\.json$/,
-      status: 'missing',
-    });
+      projectExport.artifacts.map((artifact) => artifact.type),
+      '项目包不得混入源码工程或桌面应用发布物。',
+    ).not.toEqual(expect.arrayContaining(['source-code', 'desktop-app']));
+    expect(
+      projectExport.artifacts
+        .filter((artifact) => artifact.type !== 'export-manifest')
+        .every((artifact) => /^project[\\/]tianwen-2(?:[\\/]|$)/.test(artifact.path)),
+      '除导出清单外，所有工件都必须位于当前项目的包目录内。',
+    ).toBe(true);
     const savedProjectArtifact = expectRequiredExportArtifact(projectExport.artifacts, {
       id: 'tw2-saved-project',
       type: 'saved-project',
@@ -554,8 +615,10 @@ describe('天问二号样例项目端到端契约', () => {
       source: /sample-projects[\/]tianwen-2[\/]model[\/]constraints\.sysml$/,
       status: 'ready',
     });
-    expect(savedProjectArtifact.content, '项目导出必须包含样例工程文件清单').toMatch(/project\.json[\s\S]*source-material\.md[\s\S]*view-model\.json/);
-    expect(entrySysmlArtifact.content, 'SysML 入口导出物必须包含可提交的 source set 入口元数据').toMatch(/package\s+|metadata def ProjectInfo|Tianwen2ConfirmedModel/i);
+    expect(savedProjectArtifact.content, '项目导出必须声明可恢复状态文件和完整项目文件清单').toMatch(
+      /workbench-state\.json[\s\S]*project\.json[\s\S]*source-material\.md[\s\S]*view-model\.json/,
+    );
+    expect(entrySysmlArtifact.content, 'SysML 入口导出物必须包含项目包的 source set 入口元数据').toMatch(/package\s+|metadata def ProjectInfo|Tianwen2ConfirmedModel/i);
     const viewModelArtifact = expectRequiredExportArtifact(projectExport.artifacts, {
       id: 'tw2-confirmed-view-model',
       type: 'json-view-model',
@@ -594,12 +657,13 @@ describe('天问二号样例项目端到端契约', () => {
 
     const exportManifest = JSON.parse(exportManifestArtifact.content) as JsonObject;
     const checklist = recordArray(exportManifest.checklist);
-    expect(checklist.length, '导出清单必须包含 checklist，不能只列文件名').toBeGreaterThanOrEqual(7);
     expect(
-      checklist.some(
-        (item) => item.status === 'missing' && Array.isArray(item.artifactIds) && item.artifactIds.includes('tw2-source-code'),
-      ),
-      '计划态 checklist 必须显式暴露尚未导出的源码工程缺口。',
+      checklist.map((item) => String(item.id)),
+      '项目包清单只应覆盖项目内容、模型、校验和自身清单。',
+    ).toEqual(['saved-project', 'model-source', 'view-model', 'validation', 'export-manifest']);
+    expect(
+      checklist.every((item) => item.status !== 'missing'),
+      '完整项目的计划态清单不应包含源码、桌面应用等项目外缺口。',
     ).toBe(true);
 
     const appEntry = readRequiredTextFile(appEntryPath, 'App 前端入口');
@@ -644,7 +708,7 @@ describe('天问二号样例项目端到端契约', () => {
     expect(validation.errors, '样例 JSON 参数约束视图不应产生 schema、引用或参数完整性错误').toEqual([]);
   });
 
-  it('工作台入口呈现模型浏览器与项目工作区', () => {
+  it('工作台入口保留项目侧栏与工作区并移除冗余卡片', () => {
     render(React.createElement(App));
 
     expect(
@@ -652,11 +716,11 @@ describe('天问二号样例项目端到端契约', () => {
     ).toBeVisible();
     expectVisibleText(/项目工作区/, '项目工作区入口文案');
     expect(screen.getByLabelText(/项目工作区首页/)).toBeVisible();
-    expect(screen.getByLabelText(/项目资源树/)).toBeVisible();
-    expect(screen.getByLabelText(/模型工件资源树/)).toBeVisible();
-    expect(screen.getByText(/模型浏览器/)).toBeVisible();
+    expect(screen.getByLabelText(/项目侧栏/)).toBeVisible();
+    expect(screen.queryByLabelText(/模型工件资源树/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/模型浏览器/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/当前运行于浏览器预览|Tauri 桌面壳已运行/)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /打开内置天问二号样例项目/ })).toBeVisible();
-    expectVisibleText(/当前运行于浏览器预览|Tauri 桌面壳已运行/, '运行态入口提示');
   });
 
   it('工作台不把一次性导入和确认向导做成常驻导航或页签', () => {
@@ -741,11 +805,15 @@ describe('天问二号样例项目端到端契约', () => {
     expect(screen.getAllByText(/REQ-TW2-004/).length).toBeGreaterThan(0);
     expect(screen.getByText(/航天器平台/)).toBeVisible();
     expect(screen.getAllByText(/测控通信分系统/).length).toBeGreaterThan(0);
-    expect(screen.getByText(/^修正建议$/)).toBeVisible();
-    expect(screen.getByText(/^warning$/)).toBeVisible();
+    fireEvent.click(screen.getByText('需求抽取'));
+    const extractionSuggestion = screen.getByText('修正建议：请补全 REQ-TW2-004 与测控通信分系统的材料出处。');
+    expect(extractionSuggestion.closest('.ant-alert')).toHaveClass('ant-alert-warning');
+    expect(within(extractionSuggestion.closest('.ant-alert') as HTMLElement).getByText('确认抽取结果前，请检查 REQ-TW2-004 的追溯关系是否覆盖测控通信分系统。')).toBeVisible();
 
     fireEvent.click(screen.getByRole('button', { name: /确认候选并生成最终模型工件/ }));
-    expect(await screen.findByText(/^info$/)).toBeVisible();
+    fireEvent.click(await screen.findByText('模型生成'));
+    const draftSuggestion = screen.getByText('修正建议：模型草案需复核 BDD 结构视图中的追溯覆盖。');
+    expect(draftSuggestion.closest('.ant-alert')).toHaveClass('ant-alert-info');
     fireEvent.click(await screen.findByRole('button', { name: /确认 Agent 工件并保存到工作台/ }));
 
     await waitFor(() => {
@@ -757,7 +825,7 @@ describe('天问二号样例项目端到端契约', () => {
     const generatedWorkspace = document.querySelector<HTMLElement>('.generated-workspace');
     expect(generatedWorkspace, '确认后应进入生成模型工作区，#5 断言只在该区域内检查').not.toBeNull();
     const workspace = within(generatedWorkspace as HTMLElement);
-    const workspaceNavigation = workspace.getByRole('navigation', { name: '建模工作区视图导航' });
+    const workspaceNavigation = screen.getByRole('navigation', { name: '建模工作区视图导航' });
     const tabs = within(workspaceNavigation);
     const requirementsTab = tabs.getByRole('tab', { name: '需求视图' });
     const bddTab = tabs.getByRole('tab', { name: 'BDD 结构视图' });
@@ -800,9 +868,17 @@ describe('天问二号样例项目端到端契约', () => {
     expect(workspace.getAllByText(/覆盖校验/).length, '矩阵区域必须展示覆盖校验状态，供用户发现未覆盖需求').toBeGreaterThan(0);
     expect(workspace.getByText('模型检查器')).toBeVisible();
     expect(workspace.getByText(/test-provider\/test-model.*contract-draft-session/)).toBeVisible();
-    const modelGenerationStatus = workspace.getByLabelText('模型生成状态');
-    expect(modelGenerationStatus, '模型检查器仍应保留用户可见的 validation status').toHaveTextContent(/模型校验/);
+    const workspaceHeader = document.querySelector<HTMLElement>('.workspace-header');
+    expect(workspaceHeader, '模型状态标签应位于项目工作区顶栏').not.toBeNull();
+    const modelGenerationStatus = within(workspaceHeader as HTMLElement).getByLabelText('模型生成状态');
+    expect(within(workspaceHeader as HTMLElement).getByRole('navigation', { name: '建模工作区视图导航' })).toBe(workspaceNavigation);
+    const modelHeaderRow = workspaceHeader?.querySelector<HTMLElement>('.workspace-header-model-row');
+    expect(modelHeaderRow, 'Tags 与视图 Tabs 应共用顶栏模型行').not.toBeNull();
+    expect(modelHeaderRow).toContainElement(modelGenerationStatus);
+    expect(modelHeaderRow).toContainElement(workspaceNavigation);
+    expect(modelGenerationStatus).toHaveTextContent(/模型校验/);
     expect(modelGenerationStatus).toHaveTextContent(/通过/);
+    expect(workspace.queryByLabelText('模型生成状态')).not.toBeInTheDocument();
   }, 15000);
   it('真实 Agent Sidecar 草案完成最终确认后 MBSE 建模工作台不崩溃并保持可见', async () => {
     const sourceMaterial = [
@@ -897,11 +973,11 @@ describe('天问二号样例项目端到端契约', () => {
       const workspace = within(generatedWorkspace as HTMLElement);
       expect(screen.queryByText(/^(项目主页|Project Home)$/), '生成态页面不应保留项目主页 onboarding').not.toBeInTheDocument();
       expect(workspace.queryByText(/^(项目主页|Project Home)$/), '生成工作区内不应出现项目主页 onboarding').not.toBeInTheDocument();
-      expect(workspace.getByRole('heading', { name: 'MBSE 建模工作区' })).toBeVisible();
+      expect(workspace.queryByRole('heading', { name: 'MBSE 建模工作区' })).not.toBeInTheDocument();
       expect(workspace.queryByRole('alert', { name: /模型工件来源/ })).not.toBeInTheDocument();
-      const modelGenerationStatus = workspace.getByLabelText('模型生成状态');
+      const modelGenerationStatus = screen.getByLabelText('模型生成状态');
 
-      const workspaceNavigation = workspace.getByRole('navigation', { name: '建模工作区视图导航' });
+      const workspaceNavigation = screen.getByRole('navigation', { name: '建模工作区视图导航' });
       const tabs = within(workspaceNavigation);
       const requirementsTab = tabs.getByRole('tab', { name: '需求视图' });
       const bddTab = tabs.getByRole('tab', { name: 'BDD 结构视图' });
@@ -1004,7 +1080,7 @@ describe('天问二号样例项目端到端契约', () => {
     const generatedWorkspace = document.querySelector<HTMLElement>('.generated-workspace');
     expect(generatedWorkspace, '确认后应进入生成模型工作区，IBD 断言只在项目工作区检查').not.toBeNull();
     const workspace = within(generatedWorkspace as HTMLElement);
-    const workspaceNavigation = workspace.getByRole('navigation', { name: '建模工作区视图导航' });
+    const workspaceNavigation = screen.getByRole('navigation', { name: '建模工作区视图导航' });
     fireEvent.click(within(workspaceNavigation).getByRole('tab', { name: 'IBD 内部块图' }));
     await waitFor(() => {
       expect(workspace.getByLabelText('IBD 内部块图 自动布局图'), 'IBD 必须复用 React Flow 自动布局画布呈现').toBeVisible();
@@ -1111,7 +1187,7 @@ describe('天问二号样例项目端到端契约', () => {
     const generatedWorkspace = document.querySelector<HTMLElement>('.generated-workspace');
     expect(generatedWorkspace, '确认后应进入生成模型工作区，参数约束断言必须来自用户可见工作区').not.toBeNull();
     const workspace = within(generatedWorkspace as HTMLElement);
-    const workspaceNavigation = workspace.getByRole('navigation', { name: '建模工作区视图导航' });
+    const workspaceNavigation = screen.getByRole('navigation', { name: '建模工作区视图导航' });
     fireEvent.click(within(workspaceNavigation).getByRole('tab', { name: '参数约束视图' }));
     const parameterViewTitle = parameterView.title ?? '参数约束视图';
     const constraintName = displayName(constraints[0], '参数约束');

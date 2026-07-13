@@ -3,8 +3,6 @@ import type { SavedWorkbenchProjectState } from './workbenchProject';
 import { validationArtifactPath } from './workbenchProject';
 
 export type ProjectExportArtifactType =
-  | 'source-code'
-  | 'desktop-app'
   | 'saved-project'
   | 'sysml-v2'
   | 'json-view-model'
@@ -46,28 +44,14 @@ export type ProjectExportBundle = {
   checklist: ProjectExportChecklistItem[];
 };
 
-const LEGACY_ARTIFACT_TYPE_MAP = {
-  'source-code': 'source-code',
-  'runnable-tauri-app': 'desktop-app',
-  'desktop-app': 'desktop-app',
-  'sample-project': 'saved-project',
-  'saved-project': 'saved-project',
-  'sysml-v2': 'sysml-v2',
-  'json-view-model': 'json-view-model',
-  'validation-result': 'validation-result',
-  'delivery-manifest': 'export-manifest',
-  'export-manifest': 'export-manifest',
-} satisfies Record<string, ProjectExportArtifactType>;
+const SUPPORTED_EXPORT_ARTIFACT_TYPES: Record<ProjectExportArtifactType, true> = {
+  'saved-project': true,
+  'sysml-v2': true,
+  'json-view-model': true,
+  'validation-result': true,
+  'export-manifest': true,
+};
 
-const SUPPORTED_EXPORT_ARTIFACT_TYPES = new Set<ProjectExportArtifactType>([
-  'source-code',
-  'desktop-app',
-  'saved-project',
-  'sysml-v2',
-  'json-view-model',
-  'validation-result',
-  'export-manifest',
-]);
 
 type PersistedView = {
   id?: unknown;
@@ -88,6 +72,8 @@ type PersistedView = {
 export function buildProjectExportBundle(savedProject: SavedWorkbenchProjectState): ProjectExportBundle {
   const projectId = readString(savedProject.manifest.id, 'unknown-project');
   const projectName = readString(savedProject.manifest.name, projectId);
+  const projectExportRoot = `project/${projectId}`;
+  const projectContentRoot = `${projectExportRoot}/sample-projects/${projectId}`;
   const sysmlArtifacts = savedProject.modelArtifacts.filter((artifact) => artifact.kind === 'sysml-v2');
   const viewModelArtifact = savedProject.modelArtifacts.find((artifact) => artifact.kind === 'json-view-model');
   const sysmlExportArtifacts: ProjectExportArtifact[] = sysmlArtifacts.map((artifact, index) => {
@@ -97,7 +83,7 @@ export function buildProjectExportBundle(savedProject: SavedWorkbenchProjectStat
       id: artifact.id || `${projectId}-sysml-${index}`,
       type: 'sysml-v2',
       title: artifact.title || `SysML v2 源文件 ${relativeModelPath}`,
-      path: `model/${relativeModelPath}`,
+      path: `${projectContentRoot}/model/${relativeModelPath}`,
       source: artifact.path,
       required: true,
       status: sysmlFile ? 'ready' : 'missing',
@@ -112,42 +98,22 @@ export function buildProjectExportBundle(savedProject: SavedWorkbenchProjectStat
   const validation = parsedViewModel ? validateViewModel(parsedViewModel) : emptyValidation();
   const artifacts: ProjectExportArtifact[] = [
     {
-      id: `${projectId}-source-code`.replace('tianwen-2', 'tw2'),
-      type: 'source-code',
-      title: '源码工程',
-      path: 'source/mbse-workbench',
-      source: savedProject.projectRoot ?? savedProject.manifestPath,
-      required: true,
-      status: 'missing',
-      mediaType: 'application/json',
-      content: buildSourceCodeSummary(projectName),
-      detail: '等待导出命令实际复制源码工程后才会标记为 included。',
-    },
-    {
-      id: `${projectId}-desktop-app`.replace('tianwen-2', 'tw2'),
-      type: 'desktop-app',
-      title: '桌面应用',
-      path: 'runnable/mbse-workbench.exe',
-      source: savedProject.projectRoot ?? savedProject.manifestPath,
-      required: true,
-      status: 'missing',
-      mediaType: 'application/json',
-      content: buildDesktopAppSummary(projectName),
-      detail: '等待导出命令实际复制桌面应用后才会标记为 included。',
-    },
-    {
       id: `${projectId}-saved-project`.replace('tianwen-2', 'tw2'),
       type: 'saved-project',
       title: '已保存项目快照',
-      path: `project/${projectId}`,
+      path: projectExportRoot,
       source: savedProject.manifestPath,
       required: true,
       status: 'ready',
       mediaType: 'application/json',
       content: JSON.stringify(
         {
+          statePath: `${projectExportRoot}/workbench-state.json`,
           manifestPath: savedProject.manifestPath,
-          files: savedProject.files.map((file) => ({ path: file.path, mediaType: file.mediaType })),
+          files: savedProject.files.map((file) => ({
+            path: `${projectExportRoot}/${normalizePath(file.path)}`,
+            mediaType: file.mediaType,
+          })),
         },
         null,
         2,
@@ -158,7 +124,7 @@ export function buildProjectExportBundle(savedProject: SavedWorkbenchProjectStat
       id: viewModelArtifact?.id ?? `missing-${projectId}-json-view-model`,
       type: 'json-view-model',
       title: viewModelArtifact?.title ?? 'JSON 视图模型',
-      path: 'model/view-model.json',
+      path: `${projectContentRoot}/model/view-model.json`,
       source: viewModelArtifact?.path ?? savedProject.manifestPath,
       required: true,
       status: viewModelFile ? 'ready' : 'missing',
@@ -170,7 +136,7 @@ export function buildProjectExportBundle(savedProject: SavedWorkbenchProjectStat
       id: `${projectId}-validation-result`.replace('tianwen-2', 'tw2'),
       type: 'validation-result',
       title: 'validation 结果',
-      path: 'model/validation-result.json',
+      path: `${projectContentRoot}/model/validation-result.json`,
       source: savedValidationFile?.path ?? viewModelArtifact?.path ?? savedProject.manifestPath,
       required: true,
       status: parsedViewModel ? 'ready' : 'missing',
@@ -250,30 +216,34 @@ export function normalizeProjectExportBundle(
   }
 
   const artifacts = Array.isArray(bundle.artifacts) ? bundle.artifacts : [];
-  const requiresMigration = artifacts.some((artifact) => normalizeLegacyArtifactType(artifact.type) === undefined || isLegacyOnlyArtifactType(artifact.type));
+  const requiresMigration = artifacts.some((artifact) => !isSupportedProjectExportArtifactType(artifact.type));
   if (!requiresMigration) {
     return bundle;
   }
 
   const plannedBundle = buildProjectExportBundle(savedProject);
-  const legacyByType = new Map<ProjectExportArtifactType, typeof artifacts[number]>();
+  const previousByType = new Map<ProjectExportArtifactType, typeof artifacts[number]>();
   for (const artifact of artifacts) {
-    const normalizedType = normalizeLegacyArtifactType(artifact.type);
-    if (!normalizedType || legacyByType.has(normalizedType)) {
+    if (!isSupportedProjectExportArtifactType(artifact.type) || previousByType.has(artifact.type)) {
       continue;
     }
-    legacyByType.set(normalizedType, artifact);
+    previousByType.set(artifact.type, artifact);
   }
 
-  const nextArtifacts = plannedBundle.artifacts.map((artifact) => {
-    const legacyArtifact = legacyByType.get(artifact.type);
-    return legacyArtifact
-      ? {
-          ...artifact,
-          status: normalizeArtifactStatus(legacyArtifact.status),
-          detail: legacyArtifact.detail,
-        }
-      : artifact;
+  const nextArtifacts: ProjectExportArtifact[] = plannedBundle.artifacts.map((artifact) => {
+    const previousArtifact = previousByType.get(artifact.type);
+    if (!previousArtifact) {
+      return artifact;
+    }
+    const status: ProjectExportArtifactStatus =
+      previousArtifact.status === 'included' || previousArtifact.status === 'missing'
+        ? previousArtifact.status
+        : 'ready';
+    return {
+      ...artifact,
+      status,
+      detail: previousArtifact.detail,
+    };
   });
 
   const migratedBundle: ProjectExportBundle = {
@@ -306,51 +276,9 @@ function buildValidationResult(
   };
 }
 
-function buildSourceCodeSummary(projectName: string) {
-  return JSON.stringify(
-    {
-      title: `${projectName}源码工程`,
-      root: 'source/mbse-workbench',
-      includedPaths: [
-        'package.json',
-        'package-lock.json',
-        'tsconfig.json',
-        'vite.config.ts',
-        'vitest.config.ts',
-        'index.html',
-        'src/',
-        'src-tauri/',
-        'tests/',
-        'sample-projects/',
-        'docs/adr/',
-      ],
-      purpose: '导出完整工作台源码，便于归档、复核运行环境与继续演化。',
-    },
-    null,
-    2,
-  );
-}
-
-function buildDesktopAppSummary(projectName: string) {
-  return JSON.stringify(
-    {
-      title: `${projectName}桌面应用`,
-      releaseSource: 'src-tauri/target/release/mbse-course-practice.exe',
-      exportPath: 'runnable/mbse-workbench.exe',
-      appShell: 'Tauri 桌面壳',
-      managedProcess: 'Agent Sidecar',
-      verification: ['打开导出的桌面应用', '确认应用可以加载已保存项目并展示多视图'],
-    },
-    null,
-    2,
-  );
-}
-
 function buildChecklist(artifacts: ProjectExportArtifact[]): ProjectExportChecklistItem[] {
   return [
-    buildChecklistItem('source-code', '源码工程', artifacts, ['source-code']),
-    buildChecklistItem('desktop-app', '桌面应用', artifacts, ['desktop-app']),
-    buildChecklistItem('saved-project', '项目快照', artifacts, ['saved-project']),
+    buildChecklistItem('saved-project', '项目内容', artifacts, ['saved-project']),
     buildChecklistItem('model-source', 'SysML v2 文本', artifacts, ['sysml-v2']),
     buildChecklistItem('view-model', 'JSON 视图模型', artifacts, ['json-view-model']),
     buildChecklistItem('validation', 'validation 结果', artifacts, ['validation-result']),
@@ -409,19 +337,6 @@ function buildExportManifest(bundle: ProjectExportBundle) {
   );
 }
 
-function normalizeLegacyArtifactType(type: string): ProjectExportArtifactType | undefined {
-  return Object.prototype.hasOwnProperty.call(LEGACY_ARTIFACT_TYPE_MAP, type)
-    ? LEGACY_ARTIFACT_TYPE_MAP[type as keyof typeof LEGACY_ARTIFACT_TYPE_MAP]
-    : undefined;
-}
-
-function isLegacyOnlyArtifactType(type: string) {
-  return type === 'view-report' || type === 'course-report-material' || type === 'demo-guide';
-}
-
-function normalizeArtifactStatus(status: string): ProjectExportArtifactStatus {
-  return status === 'included' || status === 'missing' ? status : 'ready';
-}
 
 function parseJsonObject(content: string | undefined): Record<string, unknown> | undefined {
   if (!content) {
@@ -444,6 +359,7 @@ function emptyValidation(): ViewModelValidationResult {
   };
 }
 
+
 function findPersistedFile(savedProject: SavedWorkbenchProjectState, path: string) {
   return savedProject.files.find((file) => normalizePath(file.path) === normalizePath(path));
 }
@@ -461,5 +377,5 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export function isSupportedProjectExportArtifactType(type: string): type is ProjectExportArtifactType {
-  return SUPPORTED_EXPORT_ARTIFACT_TYPES.has(type as ProjectExportArtifactType);
+  return Object.prototype.hasOwnProperty.call(SUPPORTED_EXPORT_ARTIFACT_TYPES, type);
 }

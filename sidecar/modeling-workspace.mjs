@@ -94,27 +94,107 @@ function relativeOutputPath(outputRootAbsolute, absolutePath) {
   const relative = path.relative(outputRootAbsolute, absolutePath).replace(/\\/g, '/');
   return isInsideRoot(outputRootAbsolute, absolutePath) ? path.posix.join(OUTPUT_ROOT, relative) : absolutePath.replace(/\\/g, '/');
 }
+function absoluteWorkspacePath(workspaceRoot, relativePath) {
+  return path.resolve(workspaceRoot, ...relativePath.split('/'));
+}
 
-function formatVerification(verification) {
+
+function locateVerificationDiagnostic(diagnostic) {
+  const diagnosticPath = typeof diagnostic.path === 'string' ? diagnostic.path : '';
+  const sysmlLocation = /^(output\/[^:]+\.sysml)(?::(\d+):(\d+))?$/u.exec(diagnosticPath);
+  if (sysmlLocation) {
+    return {
+      filePath: sysmlLocation[1],
+      line: sysmlLocation[2] ? Number(sysmlLocation[2]) : null,
+      column: sysmlLocation[3] ? Number(sysmlLocation[3]) : null,
+      modelPath: null,
+    };
+  }
+  if (diagnosticPath.startsWith(`${OUTPUT_ROOT}/`) && diagnosticPath.endsWith('.sysml')) {
+    return { filePath: diagnosticPath, line: null, column: null, modelPath: null };
+  }
+  return {
+    filePath: path.posix.join(OUTPUT_ROOT, MODEL_SOURCE_SET_ENTRY_FILE),
+    line: null,
+    column: null,
+    modelPath: diagnosticPath || null,
+  };
+}
+
+function groupVerificationDiagnostics(diagnostics) {
+  const groups = new Map();
+  for (const diagnostic of diagnostics) {
+    const location = locateVerificationDiagnostic(diagnostic);
+    const group = groups.get(location.filePath) ?? [];
+    group.push({ diagnostic, location });
+    groups.set(location.filePath, group);
+  }
+  return [...groups.entries()].sort(([left], [right]) => left.localeCompare(right));
+}
+
+function diagnosticEditInstruction(diagnostic, location, workspaceRoot) {
+  const absoluteFilePath = absoluteWorkspacePath(workspaceRoot, location.filePath);
+  if (diagnostic.code === 'missing-source-file' || diagnostic.code === 'missing-or-unsafe-file') {
+    return `调用 write 创建 ${absoluteFilePath}，补充当前 SysML 候选内容，然后再次调用 verify。`;
+  }
+  if (diagnostic.code === 'unexpected-source-file' || diagnostic.code === 'forbidden-derived-artifact') {
+    return `${diagnostic.hint ?? `处理 ${absoluteFilePath}。`} 完成后再次调用 verify。`;
+  }
+  const position = location.line
+    ? `第 ${location.line} 行${location.column ? `第 ${location.column} 列` : ''}`
+    : '对应模型声明';
+  return `调用 edit 修改 ${absoluteFilePath} 的${position}：${diagnostic.hint ?? '修正该诊断对应的 SysML 内容。'} 修改后再次调用 verify。`;
+}
+
+function verificationAffectedFiles(verification) {
+  return groupVerificationDiagnostics(verification.diagnostics)
+    .map(([filePath]) => filePath);
+}
+
+function formatVerification(verification, operation = 'verify', workspaceRoot) {
   const warningCount = verification.diagnostics.filter((item) => item.severity === 'warning').length;
   if (verification.valid) {
     const lines = [
-      'verify passed',
-      `- sysml files: ${verification.draft?.sourceSet.files.length ?? 0}`,
-      `- derived views: ${verification.draft?.viewModel.views.length ?? 0}`,
-      `- checked rules: ${verification.checkedRules.length}`,
-      `- warnings: ${warningCount}`,
+      `${operation === 'yield' ? 'YIELD_RESULT' : 'VERIFY_RESULT'}: PASSED`,
+      `工具调用成功；${operation} 参数已被正确接受。`,
+      `- SysML 候选文件：${verification.draft?.sourceSet.files.length ?? 0}`,
+      `- 派生视图：${verification.draft?.viewModel.views.length ?? 0}`,
+      `- 已检查规则：${verification.checkedRules.length}`,
+      `- 警告：${warningCount}`,
     ];
     for (const warning of verification.diagnostics.filter((item) => item.severity === 'warning')) {
-      lines.push(`- [warning:${warning.code}] ${warning.path}: ${warning.message}`);
+      const location = locateVerificationDiagnostic(warning);
+      lines.push(`- [warning:${warning.code}] ${absoluteWorkspacePath(workspaceRoot, location.filePath)}: ${warning.message}`);
     }
     return lines.join('\n');
   }
-  const lines = [`verify failed: ${verification.diagnostics.length} diagnostic(s)`];
-  for (const diagnostic of verification.diagnostics) {
-    lines.push(`- [${diagnostic.severity}:${diagnostic.code}] ${diagnostic.path}: ${diagnostic.message}`);
-    if (diagnostic.hint) {
-      lines.push(`  hint: ${diagnostic.hint}`);
+
+  const groups = groupVerificationDiagnostics(verification.diagnostics);
+  const affectedFiles = groups.map(([filePath]) => absoluteWorkspacePath(workspaceRoot, filePath));
+  const lines = [
+    `${operation === 'yield' ? 'YIELD_RESULT: REJECTED_BY_SYSML_VALIDATION' : 'VERIFY_RESULT: INVALID_SYSML'}`,
+    `工具调用成功；${operation} 参数已被正确接受。以下内容是 SysML 候选文件校验诊断，不是工具参数错误。不要修改 ${operation} 调用参数。`,
+    `需要修改的 SysML 候选文件（${affectedFiles.length}）：${affectedFiles.join('、')}`,
+    operation === 'yield'
+      ? '下一步：不要重复调用 yield。先使用 read/edit/write 修改下列绝对路径中的 SysML 候选文件，再调用 verify 获取新诊断；verify 通过后才能重新调用 yield。'
+      : '下一步：使用 read/edit/write 修改下列绝对路径中的 SysML 候选文件；完成一轮修改后，仍使用空对象参数 {} 再次调用 verify。',
+    `诊断总数：${verification.diagnostics.length}`,
+  ];
+  for (const [filePath, entries] of groups) {
+    const absoluteFilePath = absoluteWorkspacePath(workspaceRoot, filePath);
+    lines.push('', `文件（绝对路径）：${absoluteFilePath}`, `工作区相对路径：${filePath}`);
+    for (const { diagnostic, location } of entries) {
+      const position = location.line
+        ? `第 ${location.line} 行，第 ${location.column ?? 1} 列`
+        : location.modelPath
+          ? `派生模型路径 ${location.modelPath}`
+          : '整个文件';
+      lines.push(
+        `- [${diagnostic.severity}:${diagnostic.code}]`,
+        `  位置：${position}`,
+        `  原因：${diagnostic.message}`,
+        `  修改指令：${diagnosticEditInstruction(diagnostic, location, workspaceRoot)}`,
+      );
     }
   }
   return lines.join('\n');
@@ -137,7 +217,7 @@ async function copyReference(relativeSource, destination) {
   await copyFile(resolveReferenceSource(relativeSource), destination);
 }
 
-function workspaceReadme(confirmedData) {
+function workspaceReadme(confirmedData, workspaceRoot) {
   return `# Agent 建模工作区
 
 本目录是约定式工作目录，不是操作系统安全沙箱。
@@ -160,9 +240,17 @@ function workspaceReadme(confirmedData) {
 - references/adr-static-validation.md
 
 ## 固定输出
-${OUTPUT_SOURCE_FILES.map((file) => `- ${file}`).join('\n')}
+${OUTPUT_SOURCE_FILES.map((file) => `- ${absoluteWorkspacePath(workspaceRoot, file)}（工作区相对路径：${file}）`).join('\n')}
 
-禁止创建 ${OUTPUT_VIEW_MODEL_PATH}；verify/yield 会只从 SysML source set 派生 JSON 视图模型，并拒绝残留或伪造的 output/view-model.json。
+禁止创建 ${absoluteWorkspacePath(workspaceRoot, OUTPUT_VIEW_MODEL_PATH)}；verify/yield 只从 SysML source set 派生 JSON 视图模型，并拒绝残留或伪造的 output/view-model.json。
+
+## 执行策略
+- 必须调用 write，把第一版 SysML 分别创建到上述五个绝对路径；不能只在回复、思考、工具参数或 yield 中给出 SysML。
+- 后续局部修改调用 edit；需要整体重写时再次调用 write。所有 read/edit/write 的 path 都优先使用上述绝对路径。
+- 尽早落盘当前最好的一版 SysML；草案可以不完整、有缺文件或尚未通过校验。
+- verify 参数始终是空对象 {}；verify 是发现当前缺口并驱动修改的工具，不是必须先满足全部条件才能调用的门槛。不要在调用 verify 前用自写脚本预判或复刻它。
+- eval 只用于短小、增量的表达式或状态检查。较长、多步骤、包含函数或循环的 Python 等脚本应写入 scratch/scripts/，再用短命令执行。
+- 中间数据、日志、分析笔记和其他有必要保留的临时文件应分别写入 scratch/data/、scratch/logs/、scratch/notes/；临时文件不得写入 output/。
 
 当前 projectId：${confirmedData.projectId}
 当前 packageName：${confirmedData.packageName}
@@ -393,16 +481,16 @@ export async function createModelingWorkspace({ confirmedData, sourceText }) {
   const inputDir = path.join(root, 'input');
   const referencesDir = path.join(root, 'references');
   const outputDir = path.join(root, OUTPUT_ROOT);
-  const scratchDir = path.join(root, 'scratch');
+  const scratchDirectories = ['scripts', 'data', 'logs', 'notes'];
   await Promise.all([
     mkdir(inputDir, { recursive: true }),
     mkdir(referencesDir, { recursive: true }),
     mkdir(outputDir, { recursive: true }),
-    mkdir(scratchDir, { recursive: true }),
+    ...scratchDirectories.map((directory) => mkdir(path.join(root, 'scratch', directory), { recursive: true })),
   ]);
 
   await Promise.all([
-    writeFile(path.join(root, 'WORKSPACE.md'), workspaceReadme(confirmedData), 'utf8'),
+    writeFile(path.join(root, 'WORKSPACE.md'), workspaceReadme(confirmedData, root), 'utf8'),
     writeFile(path.join(inputDir, 'confirmed-data.json'), `${JSON.stringify(confirmedData, null, 2)}\n`, 'utf8'),
     writeFile(path.join(inputDir, 'source-material.md'), sourceText, 'utf8'),
     copyReference('./references/WORKBENCH_MODELING_GUIDE.md', path.join(referencesDir, 'WORKBENCH_MODELING_GUIDE.md')),
@@ -425,14 +513,22 @@ export async function createModelingWorkspace({ confirmedData, sourceText }) {
   const verifyTool = {
     name: 'verify',
     label: 'Verify MBSE workspace',
-    description: `校验固定 SysML source set（${OUTPUT_SOURCE_FILES.join(', ')}），逐个文件走 strict sysml2，并从语义结果派生 JSON 视图模型；若存在 ${OUTPUT_VIEW_MODEL_PATH} 会直接报错。`,
+    description: `可在任何阶段调用的工作区权威反馈工具，调用参数始终是空对象 {}。不要求 SysML 先完整或满足任何前置条件。它会检查固定 source set（${OUTPUT_SOURCE_FILES.map((file) => absoluteWorkspacePath(root, file)).join('、')}），对已有文件执行 strict sysml2，从语义结果派生 JSON 视图模型，并按 output/*.sysml 文件分组返回绝对路径、位置、原因和修改指令（具体指明 write/edit）。返回 VERIFY_RESULT: INVALID_SYSML 表示工具调用及参数均正确，只是候选文件需要修改；请编辑指定 SysML 文件后用同样的 {} 参数再次调用，不要反复调整参数，也不要用 Python/eval 复刻校验。若存在 ${absoluteWorkspacePath(root, OUTPUT_VIEW_MODEL_PATH)} 会直接报告违规文件。`,
     parameters: VERIFY_PARAMETERS,
     approval: 'read',
     execute: async () => {
       const verification = await verify();
+      const affectedFiles = verificationAffectedFiles(verification);
       return {
-        content: [{ type: 'text', text: formatVerification(verification) }],
-        details: { verification: { ...verification, draft: undefined } },
+        content: [{ type: 'text', text: formatVerification(verification, 'verify', root) }],
+        details: {
+          status: verification.valid ? 'passed' : 'validation-failed',
+          invocationAccepted: true,
+          invocationParameters: {},
+          affectedFiles,
+          nextAction: verification.valid ? 'continue-to-yield' : 'edit-sysml-candidates-and-retry-verify',
+          verification: { ...verification, draft: undefined },
+        },
       };
     },
   };
@@ -446,7 +542,7 @@ export async function createModelingWorkspace({ confirmedData, sourceText }) {
     execute: async (_toolCallId, report) => {
       const verification = await verify();
       if (!verification.valid || !verification.draft) {
-        throw new Error(formatVerification(verification));
+        throw new Error(formatVerification(verification, 'yield', root));
       }
       completion = {
         report,
@@ -454,7 +550,7 @@ export async function createModelingWorkspace({ confirmedData, sourceText }) {
         draft: verification.draft,
       };
       return {
-        content: [{ type: 'text', text: `yield accepted\n${formatVerification(verification)}` }],
+        content: [{ type: 'text', text: `yield accepted\n${formatVerification(verification, 'yield', root)}` }],
         details: {
           status: 'success',
           report,
