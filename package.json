@@ -11,9 +11,13 @@
     "test": "vitest run",
     "test:contract": "vitest run tests/project-contract.test.ts",
     "typecheck": "tsc --noEmit",
-    "tauri": "tauri",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build --no-bundle"
+    "bundle:prepare": "node scripts/prepare-tauri-bundle.mjs",
+    "bundle:verify-sidecar": "node scripts/verify-bundled-sidecar.mjs",
+    "bundle:inspect": "node scripts/inspect-tauri-bundle.mjs",
+    "tauri": "node scripts/run-tauri.mjs",
+    "tauri:dev": "node scripts/run-tauri.mjs dev",
+    "tauri:build": "node scripts/run-tauri.mjs build --no-bundle",
+    "tauri:bundle": "node scripts/run-tauri.mjs build"
   },
   "dependencies": {
     "@ant-design/icons": "^6.3.2",

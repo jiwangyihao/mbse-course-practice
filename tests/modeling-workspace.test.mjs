@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createModelingWorkspace } from '../sidecar/modeling-workspace.mjs';
+import { validateSysmlWithLsp } from '../sidecar/sysml-validator.mjs';
 import { defaultTianwen2ConfirmedData } from '../src/domain/modelGeneration.ts';
 
 const activeWorkspaces = [];
@@ -21,16 +22,25 @@ async function createWorkspace() {
 }
 
 async function writeValidArtifacts(workspace) {
-  const sysmlText = await readFile('sample-projects/tianwen-2/model/tianwen-2.sysml', 'utf8');
-  const viewModel = JSON.parse(await readFile('sample-projects/tianwen-2/model/view-model.json', 'utf8'));
-  viewModel.source = 'sdk-agent-generated';
   const outputDir = path.join(workspace.root, 'output');
   await mkdir(outputDir, { recursive: true });
-  await Promise.all([
-    writeFile(path.join(outputDir, 'model.sysml'), sysmlText, 'utf8'),
-    writeFile(path.join(outputDir, 'view-model.json'), `${JSON.stringify(viewModel, null, 2)}\n`, 'utf8'),
-  ]);
-  return { sysmlText, viewModel };
+  const sourceFiles = [
+    'model.sysml',
+    'requirements.sysml',
+    'structure.sysml',
+    'behavior.sysml',
+    'constraints.sysml',
+  ];
+  await Promise.all(sourceFiles.map(async (file) => {
+    const content = await readFile(path.join('sample-projects', 'tianwen-2', 'model', file), 'utf8');
+    await writeFile(path.join(outputDir, file), content, 'utf8');
+  }));
+  const sourceSet = (await Promise.all(sourceFiles.map(async (file) => ({
+    path: file,
+    content: await readFile(path.join('sample-projects', 'tianwen-2', 'model', file), 'utf8'),
+  })))).sort((left, right) => left.path.localeCompare(right.path));
+  const derivedViewModel = JSON.parse(await readFile(path.join('sample-projects', 'tianwen-2', 'model', 'view-model.json'), 'utf8'));
+  return { sourceSet, viewModel: derivedViewModel };
 }
 
 describe('建模工作区 verify/yield 契约', () => {
@@ -44,46 +54,86 @@ describe('建模工作区 verify/yield 契约', () => {
     ]);
 
     expect(readme).toContain('output/model.sysml');
-    expect(readme).toContain('output/view-model.json');
+    expect(readme).toContain('禁止创建 output/view-model.json');
     expect(JSON.parse(confirmedData).projectId).toBe('tianwen-2');
-    expect(guide).toContain('verify');
-    expect(contract).toContain('traceability-matrix');
+    expect(guide).toContain('output/requirements.sysml');
+    expect(contract).toContain('sysml-source-set-derived');
   });
+  it('verify 在最小 LSP 放行但 sysml2 拒绝的 SysML 上阻止工作区通过', async () => {
+    const workspace = await createWorkspace();
+    await writeValidArtifacts(workspace);
+    const strictRejectingSysml = [
+      `package ${defaultTianwen2ConfirmedData.packageName} {`,
+      `  doc /* ${[
+        ...defaultTianwen2ConfirmedData.requirements.map((requirement) => requirement.id),
+        ...defaultTianwen2ConfirmedData.subsystems.flatMap((subsystem) => [subsystem.id, subsystem.name]),
+      ].join(' | ')} */`,
+      '  interface def SampleTransfer {}',
+      '  part def Vehicle {',
+      '    port outlet : SampleTransfer;',
+      '  }',
+      '  part demoVehicle : Vehicle;',
+      '}',
+      '',
+    ].join('\n');
+    await writeFile(path.join(workspace.root, 'output', 'model.sysml'), strictRejectingSysml, 'utf8');
+    
 
-  it('verify 使用真实 SysML parser 和视图校验器接受完整工件', async () => {
+    const modelPath = path.join(workspace.root, 'output', 'model.sysml');
+    const outputWorkspaceRoot = path.join(workspace.root, 'output');
+    const [lspValidation, verification] = await Promise.all([
+      validateSysmlWithLsp({
+        workspaceRoot: outputWorkspaceRoot,
+        filePath: modelPath,
+        text: strictRejectingSysml,
+        timeoutMs: 30_000,
+      }),
+      workspace.verify(),
+    ]);
+
+    expect(
+      lspValidation.valid,
+      '该最小夹具必须先证明 LSP 不会报阻断诊断，否则无法覆盖旧 fallback 的差异条件',
+    ).toBe(true);
+    expect(verification.valid).toBe(false);
+    expect(verification.checkedRules).toContain('strict-sysml2-per-file');
+    expect(verification.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: 'error',
+          code: 'sysml-syntax',
+          path: expect.stringMatching(/output\/model\.sysml:\d+:\d+/),
+          message: expect.stringMatching(/cannot be typed/i),
+        }),
+      ]),
+    );
+    expect(
+      verification.diagnostics.some((diagnostic) => diagnostic.code === 'sysml2-fallback'),
+      'strict verify 不得再把 sysml2 失败降级为 warning',
+    ).toBe(false);
+  }, 120_000);
+
+  it('verify 接受内置样例工件并保持 strict sysml2 通过', async () => {
     const workspace = await createWorkspace();
     await writeValidArtifacts(workspace);
 
     const verification = await workspace.verify();
 
     expect(verification.valid).toBe(true);
-    expect(verification.checkedRules).toContain('sysml-v2-parser');
+    expect(verification.checkedRules).toContain('strict-sysml2-per-file');
     expect(verification.diagnostics.filter((diagnostic) => diagnostic.severity === 'error')).toEqual([]);
     expect(
-      verification.diagnostics,
-      '当工作区依赖 LSP 放行时，verify 必须保留 sysml2 失败的 warning，避免 UI 把它误显示成普通通过',
-    ).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          severity: 'warning',
-          code: 'sysml2-fallback',
-          message: expect.stringMatching(/sysml2.*LSP/i),
-        }),
-      ]),
-    );
+      verification.diagnostics.some((diagnostic) => ['sysml2-fallback', 'sysml-backend-unavailable'].includes(diagnostic.code)),
+      '内置样例验收必须走 strict sysml2，而不是 fallback 或后端缺失路径',
+    ).toBe(false);
   }, 120_000);
 
   it('verify 返回可定位的 SysML parser 错误', async () => {
     const workspace = await createWorkspace();
-    const { viewModel } = await writeValidArtifacts(workspace);
+    await writeValidArtifacts(workspace);
     await writeFile(
       path.join(workspace.root, 'output', 'model.sysml'),
       `package ${defaultTianwen2ConfirmedData.packageName} {\n  requirement def {\n}\n`,
-      'utf8',
-    );
-    await writeFile(
-      path.join(workspace.root, 'output', 'view-model.json'),
-      `${JSON.stringify(viewModel, null, 2)}\n`,
       'utf8',
     );
 
@@ -120,7 +170,7 @@ describe('建模工作区 verify/yield 契约', () => {
 
     expect(result.details.status).toBe('success');
     expect(workspace.getCompletion().report.summary).toContain('完成六视图');
-    expect(workspace.getCompletion().draft.sysmlText).toBe(expected.sysmlText);
+    expect(workspace.getCompletion().draft.sourceSet.files).toEqual(expected.sourceSet);
     expect(workspace.getCompletion().draft.viewModel).toEqual(expected.viewModel);
   }, 120_000);
 
@@ -134,7 +184,7 @@ describe('建模工作区 verify/yield 契约', () => {
         actions: ['尚未创建输出'],
         verificationNotes: [],
       }),
-    ).rejects.toThrow(/\[error:missing-or-unsafe-file\].*output\/model\.sysml/s);
+    ).rejects.toThrow(/\[error:missing-source-file\].*output\/model\.sysml/s);
     expect(workspace.getCompletion()).toBeUndefined();
   }, 120_000);
 });

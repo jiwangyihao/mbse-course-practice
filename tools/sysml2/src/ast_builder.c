@@ -36,6 +36,50 @@ static const char *intern_trimmed_span(SysmlBuildContext *ctx, const char *start
     return trim_and_intern(ctx, start, (size_t)(end - start));
 }
 
+static void clear_connector_end(SysmlConnectorEnd *end) {
+    if (!end) return;
+    end->target = NULL;
+    end->feature_chain = NULL;
+    end->multiplicity = NULL;
+}
+
+static void fill_connector_end(SysmlBuildContext *ctx, SysmlConnectorEnd *end, const char *raw) {
+    if (!ctx || !end || !raw) return;
+
+    const char *start = raw;
+    const char *finish = raw + strlen(raw);
+    start = trim_span_start(start, finish);
+    finish = trim_span_end(start, finish);
+    if (finish <= start) return;
+
+    if (*start == '[') {
+        const char *closing = start + 1;
+        while (closing < finish && *closing != ']') closing++;
+        if (closing < finish && *closing == ']') {
+            end->multiplicity = intern_trimmed_span(ctx, start + 1, closing);
+            start = trim_span_start(closing + 1, finish);
+        }
+    }
+
+    const char *first_dot = NULL;
+    for (const char *cursor = start; cursor < finish; cursor++) {
+        if (*cursor != '.') continue;
+        const bool is_double_colon = cursor > start && cursor + 1 < finish && cursor[-1] == ':' && cursor[1] == ':';
+        if (!is_double_colon) {
+            first_dot = cursor;
+            break;
+        }
+    }
+
+    if (!first_dot) {
+        end->target = intern_trimmed_span(ctx, start, finish);
+        return;
+    }
+
+    end->target = intern_trimmed_span(ctx, start, first_dot);
+    end->feature_chain = intern_trimmed_span(ctx, first_dot + 1, finish);
+}
+
 static void build_stmt_relationship(
     SysmlBuildContext *ctx,
     SysmlNodeKind kind,
@@ -47,6 +91,8 @@ static void build_stmt_relationship(
     SysmlRelationship *rel = sysml2_build_relationship(ctx, kind, source, target);
     if (!rel) return;
 
+    fill_connector_end(ctx, &rel->source_end, source);
+    fill_connector_end(ctx, &rel->target_end, target);
     sysml2_build_add_relationship(ctx, rel);
 }
 
@@ -466,6 +512,9 @@ SysmlNode *sysml2_build_node(
     ctx->pending_param_list = NULL;
 
     node->loc = SYSML2_LOC_INVALID;
+    node->connector_part = NULL;
+    clear_connector_end(&node->connector_source);
+    clear_connector_end(&node->connector_target);
     node->documentation = NULL;
     node->doc_loc = SYSML2_LOC_INVALID;
     node->metadata = NULL;
@@ -572,6 +621,8 @@ SysmlRelationship *sysml2_build_relationship(
     rel->owner_scope = sysml2_build_current_scope(ctx);
     rel->source = source ? sysml2_intern(ctx->intern, source) : NULL;
     rel->target = target ? sysml2_intern(ctx->intern, target) : NULL;
+    clear_connector_end(&rel->source_end);
+    clear_connector_end(&rel->target_end);
     rel->resolved_source = NULL;
     rel->resolved_target = NULL;
     rel->loc = SYSML2_LOC_INVALID;
@@ -1960,8 +2011,16 @@ void sysml2_capture_connect(
 
     stmt->source.target = trim_and_intern(ctx, source, source_len);
     stmt->target.target = trim_and_intern(ctx, target, target_len);
+    if (ctx->element_count > 0) {
+        SysmlNode *current = ctx->elements[ctx->element_count - 1];
+        if (current && current->kind == SYSML_KIND_CONNECTION_USAGE) {
+            fill_connector_end(ctx, &current->connector_source, stmt->source.target);
+            fill_connector_end(ctx, &current->connector_target, stmt->target.target);
+        }
+    }
 
     add_pending_stmt(ctx, stmt);
+    build_stmt_relationship(ctx, SYSML_KIND_REL_CONNECTION, stmt->source.target, stmt->target.target);
 }
 
 /*
@@ -1992,6 +2051,8 @@ void sysml2_capture_flow(
                 if (buf) {
                     snprintf(buf, total_len, "from %s to %s", src, tgt);
                     current->connector_part = sysml2_intern(ctx->intern, buf);
+                    fill_connector_end(ctx, &current->connector_source, src);
+                    fill_connector_end(ctx, &current->connector_target, tgt);
                 }
             }
             return;  /* Don't create statement */
@@ -2011,6 +2072,7 @@ void sysml2_capture_flow(
     }
     stmt->source.target = trim_and_intern(ctx, source, source_len);
     stmt->target.target = trim_and_intern(ctx, target, target_len);
+    build_stmt_relationship(ctx, SYSML_KIND_REL_FLOW, stmt->source.target, stmt->target.target);
 
     add_pending_stmt(ctx, stmt);
 }
@@ -2858,6 +2920,8 @@ void sysml2_capture_interface_connect(
         snprintf(buf, total_len, "%s to %s", src, tgt);
         current->connector_part = sysml2_intern(ctx->intern, buf);
     }
+    fill_connector_end(ctx, &current->connector_source, src);
+    fill_connector_end(ctx, &current->connector_target, tgt);
 }
 
 /*
@@ -2886,6 +2950,8 @@ void sysml2_capture_succession_part(
             if (buf) {
                 snprintf(buf, total_len, "first %s then %s", first_str, then_str);
                 current->connector_part = sysml2_intern(ctx->intern, buf);
+                fill_connector_end(ctx, &current->connector_source, first_str);
+                fill_connector_end(ctx, &current->connector_target, then_str);
             }
         }
     } else {
@@ -2894,6 +2960,7 @@ void sysml2_capture_succession_part(
         if (buf) {
             snprintf(buf, total_len, "first %s", first_str);
             current->connector_part = sysml2_intern(ctx->intern, buf);
+            fill_connector_end(ctx, &current->connector_source, first_str);
         }
     }
 }
@@ -2938,6 +3005,8 @@ void sysml2_capture_binding_endpoints(
     if (buf) {
         snprintf(buf, total_len, "of %s = %s", l, r);
         current->connector_part = sysml2_intern(ctx->intern, buf);
+        fill_connector_end(ctx, &current->connector_source, l);
+        fill_connector_end(ctx, &current->connector_target, r);
     }
 }
 

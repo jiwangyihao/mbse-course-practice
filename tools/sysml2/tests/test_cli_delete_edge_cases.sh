@@ -235,9 +235,7 @@ OUTPUT=$("$PARSER" -P -f sysml "$WORKDIR/rel_target.sysml" 2>&1)
 # The 'part def Target' line should be removed
 assert_not_contains "$OUTPUT" "part def Target" "Target definition removed"
 assert_contains "$OUTPUT" "part def Source" "Source preserved"
-# Note: The :> Target text may still appear since the parser preserves the
-# syntax even if target is deleted (dangling reference). This is expected behavior.
-pass "Delete target behavior verified"
+assert_not_contains "$OUTPUT" ":>" "Delete target also removes dangling specialization text"
 
 # TEST: Delete preserves unrelated relationships
 cat > "$WORKDIR/rel_preserve.sysml" << 'EOF'

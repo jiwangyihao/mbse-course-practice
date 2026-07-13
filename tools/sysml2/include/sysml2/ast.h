@@ -451,7 +451,8 @@ typedef struct SysmlNode {
 
     /* Connector/allocation parts for connections and allocations */
     const char *connector_part;  /* Raw "connect (a, b, c)" or "allocate X to Y" */
-
+    SysmlConnectorEnd connector_source; /* Structured connector source endpoint */
+    SysmlConnectorEnd connector_target; /* Structured connector target endpoint */
     /* Source location for debugging */
     Sysml2SourceLoc loc;
 
@@ -500,6 +501,8 @@ typedef struct SysmlRelationship {
     const char *owner_scope;      /* Lexical scope where the relationship is declared */
     const char *source;           /* Lexical source endpoint text */
     const char *target;           /* Lexical target endpoint text */
+    SysmlConnectorEnd source_end; /* Structured source endpoint */
+    SysmlConnectorEnd target_end; /* Structured target endpoint */
     const char *resolved_source;  /* Resolved source element/feature path when proven */
     const char *resolved_target;  /* Resolved target element/feature path when proven */
 

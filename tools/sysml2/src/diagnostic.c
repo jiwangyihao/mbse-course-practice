@@ -9,7 +9,15 @@
 #include "sysml2/diagnostic.h"
 #include "sysml2/utils.h"
 #include <string.h>
+#if defined(_WIN32)
+#include <io.h>
+#define sysml2_isatty _isatty
+#define sysml2_fileno _fileno
+#else
 #include <unistd.h>
+#define sysml2_isatty isatty
+#define sysml2_fileno fileno
+#endif
 
 /* ANSI color codes */
 #define COLOR_RESET   "\033[0m"
@@ -200,7 +208,7 @@ bool sysml2_should_use_color(Sysml2ColorMode mode, FILE *output) {
             return false;
         case SYSML2_COLOR_AUTO:
         default:
-            return isatty(fileno(output));
+            return sysml2_isatty(sysml2_fileno(output));
     }
 }
 

@@ -55,6 +55,19 @@ async function computeBuildKey(sourceRoot) {
   return hash.digest('hex').slice(0, 16);
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fileExists(filePath) {
+  try {
+    await access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function runCommand(command, args, { cwd, timeoutMs }) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -107,57 +120,80 @@ async function resolveBundledExecutable() {
   const cacheRoot = path.join(os.tmpdir(), 'mbse-sysml2-cache', buildKey);
   const buildRoot = path.join(cacheRoot, 'build');
   const executable = path.join(buildRoot, sysml2ExecutableName());
-  try {
-    await access(executable);
+  if (await fileExists(executable)) {
     return executable;
-  } catch {
-    // Need to build.
   }
 
   await mkdir(cacheRoot, { recursive: true });
-  const configureArgs = ['-S', sourceRoot, '-B', buildRoot, '-DCMAKE_BUILD_TYPE=Debug', '-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF'];
-  if (process.platform === 'win32' && !process.env.CMAKE_GENERATOR) {
-    configureArgs.push('-G', 'MinGW Makefiles');
-  }
-
-  let configureResult;
-  try {
-    configureResult = await runCommand('cmake', configureArgs, {
-      cwd: cacheRoot,
-      timeoutMs: SYSML2_TIMEOUT_MS,
-    });
-  } catch (error) {
-    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
-      throw new Sysml2BackendUnavailableError('当前环境缺少 cmake，无法构建 vendored sysml2。');
+  const lockRoot = path.join(cacheRoot, 'build.lock');
+  const deadline = Date.now() + SYSML2_TIMEOUT_MS;
+  while (true) {
+    try {
+      await mkdir(lockRoot);
+      break;
+    } catch (error) {
+      if (!(error && typeof error === 'object' && 'code' in error && error.code === 'EEXIST')) {
+        throw error;
+      }
+      if (await fileExists(executable)) {
+        return executable;
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(`等待其他进程构建 sysml2 超时：${executable}`);
+      }
+      await sleep(250);
     }
-    throw error;
-  }
-  if (configureResult.code !== 0) {
-    throw new Error(`sysml2 配置失败：\n${stripAnsi(configureResult.stderr || configureResult.stdout)}`);
   }
 
-  let buildResult;
   try {
-    buildResult = await runCommand('cmake', ['--build', buildRoot, '--target', 'sysml2'], {
-      cwd: cacheRoot,
-      timeoutMs: SYSML2_TIMEOUT_MS,
-    });
-  } catch (error) {
-    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
-      throw new Sysml2BackendUnavailableError('当前环境缺少 cmake，无法构建 vendored sysml2。');
+    if (await fileExists(executable)) {
+      return executable;
     }
-    throw error;
-  }
-  if (buildResult.code !== 0) {
-    throw new Error(`sysml2 构建失败：\n${stripAnsi(buildResult.stderr || buildResult.stdout)}`);
-  }
 
-  try {
-    await access(executable);
-  } catch {
-    throw new Error(`sysml2 构建完成但未产出可执行文件：${executable}`);
+    const configureArgs = ['-S', sourceRoot, '-B', buildRoot, '-DCMAKE_BUILD_TYPE=Debug', '-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF'];
+    if (process.platform === 'win32' && !process.env.CMAKE_GENERATOR) {
+      configureArgs.push('-G', 'MinGW Makefiles');
+    }
+
+    let configureResult;
+    try {
+      configureResult = await runCommand('cmake', configureArgs, {
+        cwd: cacheRoot,
+        timeoutMs: SYSML2_TIMEOUT_MS,
+      });
+    } catch (error) {
+      if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+        throw new Sysml2BackendUnavailableError('当前环境缺少 cmake，无法构建 vendored sysml2。');
+      }
+      throw error;
+    }
+    if (configureResult.code !== 0) {
+      throw new Error(`sysml2 配置失败：\n${stripAnsi(configureResult.stderr || configureResult.stdout)}`);
+    }
+
+    let buildResult;
+    try {
+      buildResult = await runCommand('cmake', ['--build', buildRoot, '--target', 'sysml2'], {
+        cwd: cacheRoot,
+        timeoutMs: SYSML2_TIMEOUT_MS,
+      });
+    } catch (error) {
+      if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+        throw new Sysml2BackendUnavailableError('当前环境缺少 cmake，无法构建 vendored sysml2。');
+      }
+      throw error;
+    }
+    if (buildResult.code !== 0) {
+      throw new Error(`sysml2 构建失败：\n${stripAnsi(buildResult.stderr || buildResult.stdout)}`);
+    }
+
+    if (!(await fileExists(executable))) {
+      throw new Error(`sysml2 构建完成但未产出可执行文件：${executable}`);
+    }
+    return executable;
+  } finally {
+    await rm(lockRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
-  return executable;
 }
 
 async function getExecutable() {
@@ -296,6 +332,11 @@ function isInsideRoot(root, candidate) {
   return relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath));
 }
 
+function externalOverlayRelativePath(originalFilePath) {
+  const digest = createHash('sha1').update(originalFilePath).digest('hex').slice(0, 12);
+  return path.join('__mbse_external_target__', `${digest}-${path.basename(originalFilePath)}`);
+}
+
 async function copySysmlWorkspaceFiles(sourceRoot, overlayRoot, currentRelativePath = '', skippedRelativePath = null) {
   const entries = (await readdir(sourceRoot, { withFileTypes: true }))
     .filter((entry) => !OVERLAY_IGNORED_DIRS.has(entry.name))
@@ -336,7 +377,7 @@ async function createOverlayInvocation({ workspaceRoot, filePath, text }) {
     const targetInsideWorkspaceRoot = isInsideRoot(originalWorkspaceRoot, originalFilePath);
     const fileRelativePath = targetInsideWorkspaceRoot
       ? path.relative(originalWorkspaceRoot, originalFilePath)
-      : path.basename(originalFilePath);
+      : externalOverlayRelativePath(originalFilePath);
 
     await copySysmlWorkspaceFiles(originalWorkspaceRoot, overlayRoot, '', targetInsideWorkspaceRoot ? fileRelativePath : null);
 

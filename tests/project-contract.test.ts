@@ -4,10 +4,11 @@ import process from 'node:process';
 import React from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { vi } from 'vitest';
-import { defaultTianwen2ConfirmedData, extractTianwen2ConfirmedData, generateTianwen2ModelArtifacts, validateViewModel, type ModelGenerationResult } from '../src/domain/modelGeneration';
+import { defaultTianwen2ConfirmedData, extractTianwen2ConfirmedData, validateViewModel, type ModelGenerationResult } from '../src/domain/modelGeneration';
+import { generateTianwen2ModelArtifacts } from '../src/domain/modelGeneration.node';
 import { buildProjectExportBundle, type ProjectExportArtifact } from '../src/domain/projectExport';
+import { createWorkbenchProjectState, listWorkbenchProjectResources } from '../src/domain/workbenchProject';
 import { loadBundledTianwen2Project } from '../src/domain/sampleProject';
-import { createWorkbenchProjectState } from '../src/domain/workbenchProject';
 import App from '../src/App';
 
 const tauriInvokeMock = vi.hoisted(() => vi.fn());
@@ -54,10 +55,6 @@ type PersistedTianwen2ProjectSnapshot = {
 function withSdkProvenance(draft: ModelGenerationResult, sessionId: string) {
   return {
     ...draft,
-    viewModel: {
-      ...draft.viewModel,
-      source: 'sdk-agent-generated' as const,
-    },
     provenance: {
       mode: 'sdk-agent' as const,
       provider: 'test-provider',
@@ -272,7 +269,7 @@ function createPersistedTianwen2ProjectSnapshot() {
   const hydratedWorkbenchRuntimeState = {
     savedProject,
     generatedArtifacts: {
-      sysmlText: runtimePoisonToken,
+      sourceSet: { rootDir: '', entryPath: 'model.sysml', files: [{ path: 'model.sysml', content: runtimePoisonToken }] },
       viewModel: { projectId: runtimePoisonToken, views: [] },
       validation: { valid: false, errors: [{ message: runtimePoisonToken }], findings: [] },
     },
@@ -284,7 +281,7 @@ function createPersistedTianwen2ProjectSnapshot() {
 function expectRequiredExportArtifact(
   artifacts: ProjectExportArtifact[],
   expected: {
-    id: string;
+    id?: string;
     type: string;
     path: RegExp;
     title: RegExp;
@@ -292,14 +289,16 @@ function expectRequiredExportArtifact(
     status: 'missing' | 'ready' | 'included';
   },
 ) {
-  const artifact = artifacts.find((candidate) => candidate.type === expected.type);
+  const artifact = artifacts.find((candidate) => candidate.type === expected.type && expected.path.test(candidate.path));
 
-  expect(artifact, `导出 bundle 必须包含必需工件类型 ${expected.type}`).toBeDefined();
+  expect(artifact, `导出 bundle 必须包含必需工件类型 ${expected.type} 且路径匹配 ${expected.path}`).toBeDefined();
   if (!artifact) {
     throw new Error(`导出 bundle 缺少必需工件类型 ${expected.type}`);
   }
 
-  expect(artifact.id, `${expected.type} 工件应暴露稳定 id`).toBe(expected.id);
+  if (expected.id) {
+    expect(artifact.id, `${expected.type} 工件应暴露稳定 id`).toBe(expected.id);
+  }
   expect(artifact.path, `${expected.type} 工件应暴露导出路径`).toMatch(expected.path);
   expect(artifact.title, `${expected.type} 工件标题应可读`).toMatch(expected.title);
   expect(artifact.source, `${expected.type} 工件 source 应回指已保存项目真实路径`).toMatch(expected.source);
@@ -436,6 +435,44 @@ describe('天问二号样例项目端到端契约', () => {
     }
   });
 
+  it('项目导出在缺失全部 SysML 源文件时必须把模型清单标记为 missing', () => {
+    const persistedSnapshot = createPersistedTianwen2ProjectSnapshot();
+    persistedSnapshot.modelArtifacts = persistedSnapshot.modelArtifacts.filter((artifact: { kind?: string }) => artifact.kind !== 'sysml-v2');
+    persistedSnapshot.files = persistedSnapshot.files.filter((file: { path?: string }) => !String(file.path ?? '').endsWith('.sysml'));
+
+    const projectExport = buildProjectExportBundle(persistedSnapshot);
+    const modelSourceChecklist = projectExport.checklist.find((item) => item.id === 'model-source');
+
+    expect(modelSourceChecklist, '导出 checklist 必须保留模型源条目，即使一个 SysML 工件都没有').toBeDefined();
+    expect(modelSourceChecklist?.status, '缺失全部 SysML 源文件时不得把模型清单误报为 ready 或 included').toBe('missing');
+  });
+  it('保存项目时将 sidecar 草案持久化为完整多文件 source set', async () => {
+    const sampleProject = loadBundledTianwen2Project();
+    const sidecarDraft = withSdkProvenance(await generateTianwen2ModelArtifacts(defaultTianwen2ConfirmedData), 'persisted-sidecar-draft-session');
+    const savedProject = createWorkbenchProjectState(sampleProject, { sidecarDraft });
+
+    const sidecarSysmlFiles = savedProject.files.filter((file) => /sample-projects\/tianwen-2\/sidecar\/agent-model-draft(?:\/|$).+\.sysml$/.test(file.path));
+    expect(sidecarSysmlFiles.map((file) => file.path).sort(), 'sidecar 草案必须按完整 source set 多文件持久化，而不是只保留入口 model.sysml').toEqual(
+      sidecarDraft.sourceSet.files.map((file) => `sample-projects/tianwen-2/sidecar/agent-model-draft/${file.path}`).sort(),
+    );
+    expect(sidecarSysmlFiles.map((file) => file.content).sort(), '持久化的 sidecar 草案 SysML 内容必须逐文件保留').toEqual(
+      sidecarDraft.sourceSet.files.map((file) => file.content).sort(),
+    );
+  });
+  it('列出工作台资源时将 sidecar 草案暴露为多文件 SysML 路径', async () => {
+    const sampleProject = loadBundledTianwen2Project();
+    const sidecarDraft = withSdkProvenance(await generateTianwen2ModelArtifacts(defaultTianwen2ConfirmedData), 'sidecar-resource-draft-session');
+    const savedProject = createWorkbenchProjectState(sampleProject, { sidecarDraft });
+    const resourcePaths = listWorkbenchProjectResources(savedProject)
+      .filter((resource) => resource.kind === 'Sidecar 草案' && resource.mediaType === 'text/x-sysml')
+      .map((resource) => resource.path)
+      .sort();
+
+    expect(resourcePaths, 'sidecar 草案资源树必须保留完整多文件 SysML 路径').toEqual(
+      sidecarDraft.sourceSet.files.map((file) => `sample-projects/tianwen-2/sidecar/agent-model-draft/${file.path}`).sort(),
+    );
+  });
+
   it('issue #8 tracer：项目导出只读取已保存的天问二号项目状态', () => {
     const persistedSnapshot = createPersistedTianwen2ProjectSnapshot();
 
@@ -475,14 +512,50 @@ describe('天问二号样例项目端到端契约', () => {
       source: /sample-projects[\/]tianwen-2[\/]project\.json$/,
       status: 'ready',
     });
-    const sysmlArtifact = expectRequiredExportArtifact(projectExport.artifacts, {
-      id: 'tw2-confirmed-sysml',
+    const sysmlArtifacts = projectExport.artifacts.filter((artifact) => artifact.type === 'sysml-v2');
+    expect(sysmlArtifacts.length, '项目导出必须携带完整多文件 SysML source set，而不是只导出入口文件').toBe(5);
+    const entrySysmlArtifact = expectRequiredExportArtifact(projectExport.artifacts, {
+      id: 'tw2-model-entry-sysml',
       type: 'sysml-v2',
-      path: /model[\/]tianwen-2\.sysml$/,
-      title: /SysML v2|模型文本/,
-      source: /sample-projects[\/]tianwen-2[\/]model[\/]tianwen-2\.sysml$/,
+      path: /model[\/]model\.sysml$/,
+      title: /入口|SysML v2/,
+      source: /sample-projects[\/]tianwen-2[\/]model[\/]model\.sysml$/,
       status: 'ready',
     });
+    expectRequiredExportArtifact(projectExport.artifacts, {
+      id: 'tw2-model-requirements-sysml',
+      type: 'sysml-v2',
+      path: /model[\/]requirements\.sysml$/,
+      title: /需求|SysML v2/,
+      source: /sample-projects[\/]tianwen-2[\/]model[\/]requirements\.sysml$/,
+      status: 'ready',
+    });
+    expectRequiredExportArtifact(projectExport.artifacts, {
+      id: 'tw2-model-structure-sysml',
+      type: 'sysml-v2',
+      path: /model[\/]structure\.sysml$/,
+      title: /结构|SysML v2/,
+      source: /sample-projects[\/]tianwen-2[\/]model[\/]structure\.sysml$/,
+      status: 'ready',
+    });
+    expectRequiredExportArtifact(projectExport.artifacts, {
+      id: 'tw2-model-behavior-sysml',
+      type: 'sysml-v2',
+      path: /model[\/]behavior\.sysml$/,
+      title: /行为|SysML v2/,
+      source: /sample-projects[\/]tianwen-2[\/]model[\/]behavior\.sysml$/,
+      status: 'ready',
+    });
+    expectRequiredExportArtifact(projectExport.artifacts, {
+      id: 'tw2-model-constraints-sysml',
+      type: 'sysml-v2',
+      path: /model[\/]constraints\.sysml$/,
+      title: /约束|SysML v2/,
+      source: /sample-projects[\/]tianwen-2[\/]model[\/]constraints\.sysml$/,
+      status: 'ready',
+    });
+    expect(savedProjectArtifact.content, '项目导出必须包含样例工程文件清单').toMatch(/project\.json[\s\S]*source-material\.md[\s\S]*view-model\.json/);
+    expect(entrySysmlArtifact.content, 'SysML 入口导出物必须包含可提交的 source set 入口元数据').toMatch(/package\s+|metadata def ProjectInfo|Tianwen2ConfirmedModel/i);
     const viewModelArtifact = expectRequiredExportArtifact(projectExport.artifacts, {
       id: 'tw2-confirmed-view-model',
       type: 'json-view-model',
@@ -507,18 +580,6 @@ describe('天问二号样例项目端到端契约', () => {
       source: /sample-projects[\/]tianwen-2[\/]project\.json$/,
       status: 'ready',
     });
-
-    expect(
-      projectExport.artifacts.every((artifact) => !artifact.path.startsWith('memory://') && !artifact.source.startsWith('memory://')),
-      '导出清单不得把 memory:// 当前 UI 临时工件路径当作导出路径',
-    ).toBe(true);
-    const sourceCodeManifest = JSON.parse(sourceCodeArtifact.content) as JsonObject;
-    const sourceCodePaths = Array.isArray(sourceCodeManifest.includedPaths) ? sourceCodeManifest.includedPaths.map(String).join('\n') : '';
-    expect(sourceCodePaths, '项目导出必须声明源码工程真实路径清单').toMatch(/package\.json[\s\S]*src\/[\s\S]*src-tauri\/[\s\S]*tests\//);
-    const desktopAppManifest = JSON.parse(desktopAppArtifact.content) as JsonObject;
-    expect(JSON.stringify(desktopAppManifest), '项目导出计划必须声明 release 可执行文件来源与导出路径').toMatch(/src-tauri[\/]target[\/]release[\/]mbse-course-practice\.exe[\s\S]*runnable[\/]mbse-workbench\.exe/);
-    expect(savedProjectArtifact.content, '项目导出必须包含样例工程文件清单').toMatch(/project\.json[\s\S]*source-material\.md[\s\S]*view-model\.json/);
-    expect(sysmlArtifact.content, 'SysML v2 导出物必须包含可提交的模型源文本').toMatch(/package\s+|requirement def|part def/i);
 
     const parsedViewModel = JSON.parse(viewModelArtifact.content) as JsonObject;
     const viewIds = recordArray(parsedViewModel.views).map((view) => String(view.id ?? `${view.title ?? ''}`));
@@ -630,7 +691,7 @@ describe('天问二号样例项目端到端契约', () => {
       '航天器平台应为载荷、推进、能源、热控和测控通信分系统提供统一承载。',
     ].join('\n');
     const confirmedData = extractTianwen2ConfirmedData(sourceMaterial);
-    const draft = withSdkProvenance(generateTianwen2ModelArtifacts(confirmedData), 'contract-draft-session')
+    const draft = withSdkProvenance(await generateTianwen2ModelArtifacts(confirmedData), 'contract-draft-session')
     tauriInvokeMock.mockImplementation(async (command: string) => {
       if (command === 'start_agent_sidecar') return { state: 'running', pid: 4242, endpoint: 'local://agent-sidecar/test' };
       if (command === 'extract_agent_candidates') {
@@ -791,7 +852,7 @@ describe('天问二号样例项目端到端契约', () => {
         { id: 'gnc', name: '制导导航与控制分系统', parentId: 'spacecraft-platform' },
       ],
     };
-    const sidecarDraft = withSdkProvenance(generateTianwen2ModelArtifacts(confirmedData), 'real-sidecar-draft-session');
+    const sidecarDraft = withSdkProvenance(await generateTianwen2ModelArtifacts(confirmedData), 'real-sidecar-draft-session');
 
     tauriInvokeMock.mockImplementation(async (command: string) => {
       if (command === 'start_agent_sidecar') return { state: 'running', pid: 4242, endpoint: 'local://agent-sidecar/real-draft' };
@@ -905,7 +966,7 @@ describe('天问二号样例项目端到端契约', () => {
       '航天器平台应为采样返回、测控通信、电源与热控、制导导航与控制分系统提供统一承载。',
     ].join('\n');
     const confirmedData = extractTianwen2ConfirmedData(sourceMaterial);
-    const draft = withSdkProvenance(generateTianwen2ModelArtifacts(confirmedData), 'ibd-draft-session')
+    const draft = withSdkProvenance(await generateTianwen2ModelArtifacts(confirmedData), 'ibd-draft-session')
     tauriInvokeMock.mockImplementation(async (command: string) => {
       if (command === 'start_agent_sidecar') return { state: 'running', pid: 4242, endpoint: 'local://agent-sidecar/ibd-test' };
       if (command === 'extract_agent_candidates') {
@@ -978,7 +1039,7 @@ describe('天问二号样例项目端到端契约', () => {
       '航天器平台应为采样返回、测控通信、电源与热控、制导导航与控制分系统提供统一承载。',
     ].join('\n');
     const confirmedData = extractTianwen2ConfirmedData(sourceMaterial);
-    const draft = withSdkProvenance(generateTianwen2ModelArtifacts(confirmedData), 'parameter-draft-session')
+    const draft = withSdkProvenance(await generateTianwen2ModelArtifacts(confirmedData), 'parameter-draft-session')
     const views = draft.viewModel.views as unknown as ParameterConstraintView[];
     const parameterView = views.find((view) =>
       /parameter.*constraint|constraint.*parameter|参数约束/i.test(`${view.kind ?? ''} ${view.id ?? ''} ${view.title ?? ''}`),

@@ -3,7 +3,7 @@ pub mod workbench_project;
 
 use agent_sidecar::{AgentSidecarRegistry, AgentSidecarStatus};
 use serde_json::{json, Value};
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 use workbench_project::{
     export_workbench_project as export_saved_workbench_project,
     load_workbench_project as load_saved_workbench_project,
@@ -100,7 +100,10 @@ fn export_workbench_project(
 
 pub fn run() {
     tauri::Builder::default()
-        .manage(AgentSidecarRegistry::default())
+        .setup(|app| {
+            app.manage(AgentSidecarRegistry::for_app(app.handle()));
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             workbench_entry,
             start_agent_sidecar,

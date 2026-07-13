@@ -17,5 +17,5 @@
     "jsx": "react-jsx",
     "types": ["vitest/globals"]
   },
-  "include": ["src", "tests", "vite.config.ts", "vitest.config.ts"]
+  "include": ["src", "tests", "sidecar/**/*.d.ts", "vite.config.ts", "vitest.config.ts"]
 }

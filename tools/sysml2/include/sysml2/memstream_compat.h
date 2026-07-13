@@ -8,6 +8,10 @@
 #ifndef SYSML2_MEMSTREAM_COMPAT_H
 #define SYSML2_MEMSTREAM_COMPAT_H
 
+#if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include "common.h"
 #include <stdio.h>
 #include <stddef.h>

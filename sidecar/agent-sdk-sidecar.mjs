@@ -1,6 +1,10 @@
+import { writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { createAgentSession, discoverAuthStorage, ModelRegistry, SessionManager } from '@oh-my-pi/pi-coding-agent';
+import { defaultTianwen2ConfirmedData } from '../src/domain/modelGeneration.ts';
+import { generateTianwen2ModelArtifacts } from '../src/domain/modelGeneration.node.ts';
 import { createModelingWorkspace, modelingWorkspacePaths } from './modeling-workspace.mjs';
 
 const EXTRACTION_OUTPUT_SCHEMA = {
@@ -427,11 +431,11 @@ function buildWorkspaceModelingPrompt(confirmedData) {
     '在当前工作目录内完成最终 MBSE 工件。',
     '先阅读 WORKSPACE.md、input/confirmed-data.json、references/ 下的规范、ADR 和示例。',
     'input/confirmed-data.json 是唯一业务事实来源；示例只用于理解语法和数据结构。',
-    `必须创建并维护 ${modelingWorkspacePaths.sysml} 与 ${modelingWorkspacePaths.viewModel}。`,
+    `必须创建并维护以下 SysML 源文件：${modelingWorkspacePaths.files.join('、')}。`,
+    `禁止创建 ${modelingWorkspacePaths.forbiddenViewModel}；JSON 视图模型由 verify/yield 从 strict sysml2 语义自动派生。`,
     '你可以使用本会话开放的 OMP 内置工具自主探索、编写和修正文件，但应把工作限制在当前约定式工作目录。',
     '完成初稿后调用 verify；根据每条路径化诊断迭代修正，直到 verify passed。',
     '只有确信工作完全完成且 verify 已通过后才能调用 yield。',
-    'yield 参数只能包含 summary、actions、verificationNotes 执行记录，不能包含 SysML 或 JSON 工件正文，也不能提交自定义文件路径。',
     `当前 projectId=${confirmedData.projectId}，packageName=${confirmedData.packageName}。`,
   ].join('\n');
 }
@@ -443,9 +447,9 @@ async function runWorkspaceModelingTurn({ sourceText, confirmedData }) {
     const created = await createSdkSession({
       outputSchema: undefined,
       systemPrompt: [
-        '你是在约定式文件工作区中工作的 MBSE 建模 Agent。',
-        '所有最终工件都必须写入固定输出路径；不要在聊天或 yield 参数中回传完整工件。',
-        'verify 是唯一校验接口；yield 会重新执行同一校验，只有通过时才能结束会话。',
+        '所有最终工件都必须写入固定 SysML source set；不要在聊天或 yield 参数中回传完整工件。',
+        'verify 会逐个 SysML 文件执行 strict sysml2，并仅从语义结果派生 JSON 视图模型。',
+        '不要创建 output/view-model.json；该路径被视为违规输出。',
         '你可以自主使用 OMP 内置工具阅读参考、编写文件、运行辅助命令和迭代修正。',
       ].join('\n'),
       cwd: workspace.root,
@@ -596,6 +600,35 @@ async function handleGenerateModelDraft(sourceText, confirmedData) {
   };
 }
 
+async function handleVerifyWorkspaceFixture() {
+  const sourceText = 'bundled-sidecar-self-check';
+  const workspace = await createModelingWorkspace({
+    confirmedData: defaultTianwen2ConfirmedData,
+    sourceText,
+  });
+  try {
+    const artifacts = await generateTianwen2ModelArtifacts(defaultTianwen2ConfirmedData);
+    await Promise.all(
+      artifacts.sourceSet.files.map((file) =>
+        writeFile(path.join(workspace.root, modelingWorkspacePaths.outputRoot, file.path), file.content, 'utf8'),
+      ),
+    );
+    const verification = await workspace.verify();
+    if (!verification.valid) {
+      throw new Error(verification.diagnostics.map((diagnostic) => `${diagnostic.code} ${diagnostic.path} ${diagnostic.message}`).join('\n'));
+    }
+    return {
+      verification: {
+        valid: verification.valid,
+        diagnostics: verification.diagnostics,
+        checkedRules: verification.checkedRules,
+      },
+    };
+  } finally {
+    await workspace.dispose();
+  }
+}
+
 async function handleRequest(request) {
   const action = request?.action;
   if (action === 'preflight') {
@@ -612,6 +645,9 @@ async function handleRequest(request) {
       ok: true,
       session: await handleGenerateModelDraft(request?.sourceText ?? '', request.confirmedData),
     };
+  }
+  if (action === 'verify-workspace-fixture') {
+    return { ok: true, verification: await handleVerifyWorkspaceFixture() };
   }
   if (action === 'shutdown') {
     return { ok: true, shutdown: true };
@@ -639,7 +675,8 @@ async function main() {
   }
 }
 
-const isMainModule = process.argv[1] ? fileURLToPath(import.meta.url) === process.argv[1] : false;
+const isMainModule = (typeof import.meta === 'object' && 'main' in import.meta && import.meta.main)
+  || (process.argv[1] ? fileURLToPath(import.meta.url) === process.argv[1] : false);
 if (isMainModule) {
   await main();
 }

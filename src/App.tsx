@@ -453,8 +453,8 @@ export default function App() {
       setAgentError('拒绝保存缺少真实 SDK Agent provenance 的模型工件。');
       return false;
     }
-    if (generatedArtifacts.viewModel.source !== 'sdk-agent-generated') {
-      setAgentError('拒绝保存未声明为 SDK Agent 生成的模型工件。');
+    if (generatedArtifacts.viewModel.source !== 'sysml-source-set-derived') {
+      setAgentError('拒绝保存未声明为 SysML source set 派生的模型工件。');
       return false;
     }
     const nextProject = createWorkbenchProjectState(sampleProject, {
@@ -820,7 +820,7 @@ function AgentDraftReview({
               { key: 'model', label: 'model', children: draftEvent.draft.provenance?.model ?? session.model ?? 'unknown' },
               { key: 'sdkSessionId', label: 'SDK sessionId', children: draftEvent.draft.provenance?.sdkSessionId ?? session.sessionId },
               { key: 'completedAt', label: '完成时间', children: draftEvent.draft.provenance?.completedAt ?? session.completedAt ?? 'unknown' },
-              { key: 'sysml', label: 'SysML v2', children: `${draftEvent.draft.sysmlText.length} 字符` },
+              { key: 'sysml', label: 'SysML 源文件', children: `${draftEvent.draft.sourceSet.files.length} 个文件` },
               { key: 'views', label: '视图模型', children: `${draftEvent.draft.viewModel.views.length} 个视图` },
               { key: 'validation', label: '确定性校验', children: draftEvent.draft.validation.valid ? '通过' : '失败' },
             ]}

@@ -15,15 +15,43 @@
   ],
   "modelArtifacts": [
     {
-      "id": "tw2-confirmed-sysml",
-      "title": "确认生成的 SysML v2 模型文本",
+      "id": "tw2-model-entry-sysml",
+      "title": "模型入口 SysML v2 源文件",
       "kind": "sysml-v2",
-      "path": "sample-projects/tianwen-2/model/tianwen-2.sysml",
+      "path": "sample-projects/tianwen-2/model/model.sysml",
+      "placeholder": false
+    },
+    {
+      "id": "tw2-model-requirements-sysml",
+      "title": "需求 SysML v2 源文件",
+      "kind": "sysml-v2",
+      "path": "sample-projects/tianwen-2/model/requirements.sysml",
+      "placeholder": false
+    },
+    {
+      "id": "tw2-model-structure-sysml",
+      "title": "结构 SysML v2 源文件",
+      "kind": "sysml-v2",
+      "path": "sample-projects/tianwen-2/model/structure.sysml",
+      "placeholder": false
+    },
+    {
+      "id": "tw2-model-behavior-sysml",
+      "title": "行为 SysML v2 源文件",
+      "kind": "sysml-v2",
+      "path": "sample-projects/tianwen-2/model/behavior.sysml",
+      "placeholder": false
+    },
+    {
+      "id": "tw2-model-constraints-sysml",
+      "title": "约束 SysML v2 源文件",
+      "kind": "sysml-v2",
+      "path": "sample-projects/tianwen-2/model/constraints.sysml",
       "placeholder": false
     },
     {
       "id": "tw2-confirmed-view-model",
-      "title": "确认生成的视图模型 JSON 工件",
+      "title": "派生的视图模型 JSON 工件",
       "kind": "json-view-model",
       "path": "sample-projects/tianwen-2/model/view-model.json",
       "placeholder": false

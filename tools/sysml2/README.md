@@ -18,8 +18,7 @@ The Swiss Army knife for SysML v2 — parse, validate, query, and modify models 
 
 Requirements:
 - CMake 3.16+
-- C11 compiler (GCC, Clang, or MSVC)
-
+- C11 compiler (validated in this repo with GCC/Clang; MSVC is currently not a supported, verified toolchain here)
 ```bash
 mkdir build && cd build
 cmake ..

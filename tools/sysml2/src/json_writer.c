@@ -151,6 +151,112 @@ static void write_string_array_field(JsonWriter *w, const char *key,
     fputc(']', w->out);
 }
 
+static void write_bool_array_field(JsonWriter *w, const char *key,
+                                    const bool *values, size_t count, bool comma) {
+    if (comma) {
+        fputc(',', w->out);
+        write_newline(w);
+    }
+    write_indent(w);
+    write_string(w, key);
+    fputs(": [", w->out);
+
+    for (size_t i = 0; i < count; i++) {
+        if (i > 0) fputs(", ", w->out);
+        fputs(values[i] ? "true" : "false", w->out);
+    }
+
+    fputc(']', w->out);
+}
+
+static bool connector_end_has_content(const SysmlConnectorEnd *end) {
+    return end && (end->target || end->feature_chain || end->multiplicity);
+}
+
+static void write_connector_end_field(JsonWriter *w, const char *key,
+                                      const SysmlConnectorEnd *end, bool comma) {
+    if (!connector_end_has_content(end)) {
+        return;
+    }
+    if (comma) {
+        fputc(',', w->out);
+        write_newline(w);
+    }
+    write_indent(w);
+    write_string(w, key);
+    fputs(": {", w->out);
+    write_newline(w);
+    w->indent_level++;
+    write_string_field(w, "target", end->target, false);
+    if (end->feature_chain) {
+        write_string_field(w, "featureChain", end->feature_chain, true);
+    }
+    if (end->multiplicity) {
+        write_string_field(w, "multiplicity", end->multiplicity, true);
+    }
+    write_newline(w);
+    w->indent_level--;
+    write_indent(w);
+    fputc('}', w->out);
+}
+
+static void write_metadata_usage(JsonWriter *w, const SysmlMetadataUsage *m) {
+    fputs("{ \"type\": ", w->out);
+    write_string(w, m->type_ref);
+    if (m->about_count > 0 && m->about) {
+        fputs(", \"about\": [", w->out);
+        for (size_t j = 0; j < m->about_count; j++) {
+            if (j > 0) fputs(", ", w->out);
+            write_string(w, m->about[j]);
+        }
+        fputc(']', w->out);
+    }
+    if (m->feature_count > 0) {
+        fputs(", \"features\": {", w->out);
+        for (size_t j = 0; j < m->feature_count; j++) {
+            SysmlMetadataFeature *f = m->features[j];
+            if (!f) continue;
+            if (j > 0) fputc(',', w->out);
+            fputc(' ', w->out);
+            write_string(w, f->name);
+            fputs(": ", w->out);
+            if (f->value) {
+                write_string(w, f->value);
+            } else {
+                fputs("null", w->out);
+            }
+        }
+        fputs(" }", w->out);
+    }
+    fputs(" }", w->out);
+}
+
+static void write_metadata_array_field(JsonWriter *w, const char *key,
+                                       SysmlMetadataUsage **metadata, size_t count, bool comma) {
+    if (!metadata || count == 0) {
+        return;
+    }
+    if (comma) {
+        fputc(',', w->out);
+        write_newline(w);
+    }
+    write_indent(w);
+    write_string(w, key);
+    fputs(": [", w->out);
+    for (size_t i = 0; i < count; i++) {
+        SysmlMetadataUsage *m = metadata[i];
+        if (!m) continue;
+        if (i > 0) fputc(',', w->out);
+        write_newline(w);
+        write_indent(w);
+        fputs("  ", w->out);
+        write_metadata_usage(w, m);
+    }
+    write_newline(w);
+    write_indent(w);
+    fputc(']', w->out);
+}
+
 /*
  * Write the meta section
  */
@@ -212,52 +318,22 @@ static void write_element(JsonWriter *w, const SysmlNode *node) {
     if (node->typed_by && node->typed_by_count > 0) {
         write_string_array_field(w, "typedBy", node->typed_by, node->typed_by_count, true);
     }
+    if (node->typed_by_conjugated && node->typed_by_count > 0) {
+        write_bool_array_field(w, "typedByConjugated", node->typed_by_conjugated, node->typed_by_count, true);
+    }
     if (node->result_expression) {
         write_string_field(w, "resultExpression", node->result_expression, true);
     }
+
+    write_connector_end_field(w, "connectorSource", &node->connector_source, true);
+    write_connector_end_field(w, "connectorTarget", &node->connector_target, true);
 
     /* prefixMetadata (if present) */
     if (node->prefix_metadata && node->prefix_metadata_count > 0) {
         write_string_array_field(w, "prefixMetadata", node->prefix_metadata, node->prefix_metadata_count, true);
     }
-
-    /* metadata (if present) */
-    if (node->metadata && node->metadata_count > 0) {
-        fputc(',', w->out);
-        write_newline(w);
-        write_indent(w);
-        fputs("\"metadata\": [", w->out);
-        for (size_t i = 0; i < node->metadata_count; i++) {
-            SysmlMetadataUsage *m = node->metadata[i];
-            if (!m) continue;
-            if (i > 0) fputc(',', w->out);
-            write_newline(w);
-            write_indent(w);
-            fputs("  { \"type\": ", w->out);
-            write_string(w, m->type_ref);
-            if (m->feature_count > 0) {
-                fputs(", \"features\": {", w->out);
-                for (size_t j = 0; j < m->feature_count; j++) {
-                    SysmlMetadataFeature *f = m->features[j];
-                    if (!f) continue;
-                    if (j > 0) fputc(',', w->out);
-                    fputc(' ', w->out);
-                    write_string(w, f->name);
-                    fputs(": ", w->out);
-                    if (f->value) {
-                        write_string(w, f->value);
-                    } else {
-                        fputs("null", w->out);
-                    }
-                }
-                fputs(" }", w->out);
-            }
-            fputs(" }", w->out);
-        }
-        write_newline(w);
-        write_indent(w);
-        fputc(']', w->out);
-    }
+    write_metadata_array_field(w, "prefixAppliedMetadata", node->prefix_applied_metadata, node->prefix_applied_metadata_count, true);
+    write_metadata_array_field(w, "metadata", node->metadata, node->metadata_count, true);
 
     write_newline(w);
     w->indent_level--;
@@ -307,6 +383,8 @@ static void write_relationship(JsonWriter *w, const SysmlRelationship *rel) {
     write_string_field(w, "ownerScope", rel->owner_scope, true);
     write_string_field(w, "sourceRaw", rel->source, true);
     write_string_field(w, "targetRaw", rel->target, true);
+    write_connector_end_field(w, "sourceEndpoint", &rel->source_end, true);
+    write_connector_end_field(w, "targetEndpoint", &rel->target_end, true);
 
     if (rel->resolved_source) {
         write_string_field(w, "resolvedSource", rel->resolved_source, true);
@@ -391,26 +469,8 @@ Sysml2Result sysml2_json_write(
             if (i > 0) fputc(',', w.out);
             write_newline(&w);
             write_indent(&w);
-            fputs("{ \"type\": ", w.out);
-            write_string(&w, m->type_ref);
-            if (m->feature_count > 0) {
-                fputs(", \"features\": {", w.out);
-                for (size_t j = 0; j < m->feature_count; j++) {
-                    SysmlMetadataFeature *f = m->features[j];
-                    if (!f) continue;
-                    if (j > 0) fputc(',', w.out);
-                    fputc(' ', w.out);
-                    write_string(&w, f->name);
-                    fputs(": ", w.out);
-                    if (f->value) {
-                        write_string(&w, f->value);
-                    } else {
-                        fputs("null", w.out);
-                    }
-                }
-                fputs(" }", w.out);
-            }
-            fputs(" }", w.out);
+            fputs("  ", w.out);
+            write_metadata_usage(&w, m);
         }
         write_newline(&w);
         w.indent_level--;

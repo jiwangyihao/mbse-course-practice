@@ -193,6 +193,54 @@ describe('vendored sysml2 backend', () => {
     120_000,
   );
 
+  it(
+    '外部同名 basename overlay 不覆盖工作区原有模型',
+    async () => {
+      const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'mbse-sysml2-same-basename-workspace-'));
+      const externalRoot = await mkdtemp(path.join(os.tmpdir(), 'mbse-sysml2-same-basename-external-'));
+      const workspaceFilePath = path.join(workspaceRoot, 'structure.sysml');
+      const externalFilePath = path.join(externalRoot, 'structure.sysml');
+      await Promise.all([
+        writeFile(workspaceFilePath, 'package WorkspacePkg {\n  part def SharedPart;\n}\n', 'utf8'),
+        writeFile(
+          externalFilePath,
+          'package ExternalPkg {\n  private import WorkspacePkg::*;\n  part externalVehicle : SharedPart;\n}\n',
+          'utf8',
+        ),
+      ]);
+
+      try {
+        const analysis = await runSysml2Analysis({
+          workspaceRoot,
+          filePath: externalFilePath,
+          text: await readFile(externalFilePath, 'utf8'),
+          timeoutMs: 120_000,
+        });
+        expect(
+          analysis.valid,
+          '外部目标与工作区文件同名时，overlay 仍必须保留工作区模型参与导入解析',
+        ).toBe(true);
+
+        const sources = analysis.semanticDocuments
+          .map((document) => document.meta?.source)
+          .filter((source) => typeof source === 'string');
+        expect(sources).toEqual(expect.arrayContaining([workspaceFilePath, externalFilePath]));
+
+        const packageIds = analysis.semanticDocuments
+          .flatMap((document) => document.elements ?? [])
+          .filter((element) => element.type === 'Package')
+          .map((element) => element.id);
+        expect(packageIds).toEqual(expect.arrayContaining(['WorkspacePkg', 'ExternalPkg']));
+      } finally {
+        await Promise.all([
+          rm(workspaceRoot, { recursive: true, force: true }),
+          rm(externalRoot, { recursive: true, force: true }),
+        ]);
+      }
+    },
+    120_000,
+  );
+
 
   it(
     '统一 seam 在 sysml2 失败且 LSP 放行时仍返回 sysml2 结果',

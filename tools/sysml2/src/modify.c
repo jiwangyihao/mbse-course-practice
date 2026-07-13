@@ -53,6 +53,38 @@ static bool add_to_id_set(
     return true;
 }
 
+static SysmlNode *sysml2_modify_deep_copy_node(
+    SysmlNode *src,
+    const char *target_scope,
+    Sysml2Arena *arena,
+    Sysml2Intern *intern
+);
+
+static bool sysml2_modify_statement_references_deleted(
+    SysmlStatement *stmt,
+    const char *owner_scope,
+    const char **deleted_ids,
+    size_t deleted_count,
+    Sysml2Arena *arena,
+    Sysml2Intern *intern
+);
+
+static void sysml2_modify_filter_deleted_body_statements(
+    SysmlNode *node,
+    const char **deleted_ids,
+    size_t deleted_count,
+    Sysml2Arena *arena,
+    Sysml2Intern *intern
+);
+
+static void sysml2_modify_filter_deleted_node_references(
+    SysmlNode *node,
+    const char **deleted_ids,
+    size_t deleted_count,
+    Sysml2Arena *arena,
+    Sysml2Intern *intern
+);
+
 /*
  * Create a new modification plan
  */
@@ -373,7 +405,11 @@ SysmlSemanticModel *sysml2_modify_clone_with_deletions(
         if (!node || !node->id) continue;
 
         if (!id_in_set(node->id, deleted_ids, deleted_count)) {
-            result->elements[result->element_count++] = node;
+            SysmlNode *node_copy = sysml2_modify_deep_copy_node(node, NULL, arena, intern);
+            if (!node_copy) return NULL;
+            sysml2_modify_filter_deleted_node_references(node_copy, deleted_ids, deleted_count, arena, intern);
+            sysml2_modify_filter_deleted_body_statements(node_copy, deleted_ids, deleted_count, arena, intern);
+            result->elements[result->element_count++] = node_copy;
         }
     }
 
@@ -921,12 +957,17 @@ static SysmlNode *sysml2_modify_deep_copy_node(
     memcpy(dst, src, sizeof(SysmlNode));
 
     /* Remap IDs */
-    dst->id = sysml2_modify_remap_id(src->id, target_scope, arena, intern);
-    if (src->parent_id) {
-        dst->parent_id = sysml2_modify_remap_id(src->parent_id, target_scope, arena, intern);
+    if (target_scope) {
+        dst->id = sysml2_modify_remap_id(src->id, target_scope, arena, intern);
+        if (src->parent_id) {
+            dst->parent_id = sysml2_modify_remap_id(src->parent_id, target_scope, arena, intern);
+        } else {
+            /* Top-level fragment element → parent is target scope */
+            dst->parent_id = sysml2_intern(intern, target_scope);
+        }
     } else {
-        /* Top-level fragment element → parent is target scope */
-        dst->parent_id = sysml2_intern(intern, target_scope);
+        dst->id = src->id;
+        dst->parent_id = src->parent_id;
     }
 
     /* Deep copy typed_by array */
@@ -1051,6 +1092,216 @@ static SysmlNode *sysml2_modify_deep_copy_node(
     }
 
     return dst;
+}
+
+static bool sysml2_modify_shorthand_stmt_is_duplicate(
+    SysmlStatement *stmt,
+    const char **frag_names,
+    size_t frag_name_count,
+    const char **frag_raw_texts,
+    size_t frag_raw_count,
+    Sysml2Arena *arena,
+    Sysml2Intern *intern
+) {
+    const char *name = sysml2_extract_shorthand_stmt_name(stmt->raw_text, arena, intern);
+    if (name && id_in_set(name, frag_names, frag_name_count)) {
+        return true;
+    }
+    for (size_t i = 0; i < frag_raw_count; i++) {
+        if (sysml2_shorthand_stmt_equivalent(stmt->raw_text, frag_raw_texts[i])) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static const char *sysml2_modify_parent_scope(
+    const char *scope_id,
+    Sysml2Arena *arena,
+    Sysml2Intern *intern
+) {
+    if (!scope_id) return NULL;
+    const char *last = strstr(scope_id, "::");
+    const char *cursor = last;
+    while (cursor) {
+        last = cursor;
+        cursor = strstr(cursor + 2, "::");
+    }
+    if (!last) return NULL;
+    size_t len = (size_t)(last - scope_id);
+    char *parent = sysml2_arena_alloc(arena, len + 1);
+    if (!parent) return NULL;
+    memcpy(parent, scope_id, len);
+    parent[len] = '\0';
+    return sysml2_intern(intern, parent);
+}
+
+static const char *sysml2_modify_normalize_endpoint(
+    const char *endpoint,
+    Sysml2Arena *arena,
+    Sysml2Intern *intern
+) {
+    if (!endpoint) return NULL;
+    size_t extra = 0;
+    for (const char *cursor = endpoint; *cursor; cursor++) {
+        if (*cursor == '.') extra++;
+    }
+    if (extra == 0) return endpoint;
+
+    size_t len = strlen(endpoint);
+    char *normalized = sysml2_arena_alloc(arena, len + extra + 1);
+    if (!normalized) return NULL;
+    size_t out = 0;
+    for (size_t i = 0; i < len; i++) {
+        if (endpoint[i] == '.') {
+            normalized[out++] = ':';
+            normalized[out++] = ':';
+        } else {
+            normalized[out++] = endpoint[i];
+        }
+    }
+    normalized[out] = '\0';
+    return sysml2_intern(intern, normalized);
+}
+
+static bool sysml2_modify_statement_endpoint_deleted(
+    const char *endpoint,
+    const char *owner_scope,
+    const char **deleted_ids,
+    size_t deleted_count,
+    Sysml2Arena *arena,
+    Sysml2Intern *intern
+) {
+    if (!endpoint) return false;
+    if (id_in_set(endpoint, deleted_ids, deleted_count)) return true;
+
+    const char *normalized = sysml2_modify_normalize_endpoint(endpoint, arena, intern);
+    if (normalized && id_in_set(normalized, deleted_ids, deleted_count)) return true;
+    if (!normalized) return false;
+
+    const char *scope = owner_scope;
+    while (scope) {
+        size_t scope_len = strlen(scope);
+        size_t endpoint_len = strlen(normalized);
+        char *candidate = sysml2_arena_alloc(arena, scope_len + 2 + endpoint_len + 1);
+        if (!candidate) return false;
+        memcpy(candidate, scope, scope_len);
+        candidate[scope_len] = ':';
+        candidate[scope_len + 1] = ':';
+        memcpy(candidate + scope_len + 2, normalized, endpoint_len);
+        candidate[scope_len + 2 + endpoint_len] = '\0';
+        if (id_in_set(candidate, deleted_ids, deleted_count)) {
+            return true;
+        }
+        scope = sysml2_modify_parent_scope(scope, arena, intern);
+    }
+
+    return false;
+}
+
+static bool sysml2_modify_statement_references_deleted(
+    SysmlStatement *stmt,
+    const char *owner_scope,
+    const char **deleted_ids,
+    size_t deleted_count,
+    Sysml2Arena *arena,
+    Sysml2Intern *intern
+) {
+    if (!stmt) return false;
+    switch (stmt->kind) {
+        case SYSML_STMT_BIND:
+        case SYSML_STMT_CONNECT:
+        case SYSML_STMT_FLOW:
+        case SYSML_STMT_ALLOCATE:
+        case SYSML_STMT_SUCCESSION:
+        case SYSML_STMT_SATISFY:
+            return sysml2_modify_statement_endpoint_deleted(stmt->source.target, owner_scope, deleted_ids, deleted_count, arena, intern)
+                || sysml2_modify_statement_endpoint_deleted(stmt->target.target, owner_scope, deleted_ids, deleted_count, arena, intern);
+        default:
+            return false;
+    }
+}
+
+static void sysml2_modify_filter_deleted_body_statements(
+    SysmlNode *node,
+    const char **deleted_ids,
+    size_t deleted_count,
+    Sysml2Arena *arena,
+    Sysml2Intern *intern
+) {
+    if (!node || node->body_stmt_count == 0 || !node->body_stmts) return;
+    SysmlStatement **filtered = sysml2_arena_alloc(arena, node->body_stmt_count * sizeof(SysmlStatement *));
+    if (!filtered) return;
+    size_t kept = 0;
+    for (size_t i = 0; i < node->body_stmt_count; i++) {
+        SysmlStatement *stmt = node->body_stmts[i];
+        if (sysml2_modify_statement_references_deleted(stmt, node->id, deleted_ids, deleted_count, arena, intern)) {
+            continue;
+        }
+        filtered[kept++] = stmt;
+    }
+    node->body_stmts = filtered;
+    node->body_stmt_count = kept;
+}
+
+static void sysml2_modify_filter_deleted_node_references(
+    SysmlNode *node,
+    const char **deleted_ids,
+    size_t deleted_count,
+    Sysml2Arena *arena,
+    Sysml2Intern *intern
+) {
+    if (!node) return;
+
+    if (node->typed_by_count > 0 && node->typed_by) {
+        const char **typed_by = sysml2_arena_alloc(arena, node->typed_by_count * sizeof(const char *));
+        bool *typed_by_conjugated = node->typed_by_conjugated
+            ? sysml2_arena_alloc(arena, node->typed_by_count * sizeof(bool))
+            : NULL;
+        size_t kept = 0;
+        for (size_t i = 0; i < node->typed_by_count; i++) {
+            if (sysml2_modify_statement_endpoint_deleted(node->typed_by[i], node->parent_id, deleted_ids, deleted_count, arena, intern)) continue;
+            typed_by[kept] = node->typed_by[i];
+            if (typed_by_conjugated) typed_by_conjugated[kept] = node->typed_by_conjugated[i];
+            kept++;
+        }
+        node->typed_by = typed_by;
+        node->typed_by_conjugated = typed_by_conjugated;
+        node->typed_by_count = kept;
+    }
+
+    if (node->specializes_count > 0 && node->specializes) {
+        const char **specializes = sysml2_arena_alloc(arena, node->specializes_count * sizeof(const char *));
+        size_t kept = 0;
+        for (size_t i = 0; i < node->specializes_count; i++) {
+            if (sysml2_modify_statement_endpoint_deleted(node->specializes[i], node->parent_id, deleted_ids, deleted_count, arena, intern)) continue;
+            specializes[kept++] = node->specializes[i];
+        }
+        node->specializes = specializes;
+        node->specializes_count = kept;
+    }
+
+    if (node->redefines_count > 0 && node->redefines) {
+        const char **redefines = sysml2_arena_alloc(arena, node->redefines_count * sizeof(const char *));
+        size_t kept = 0;
+        for (size_t i = 0; i < node->redefines_count; i++) {
+            if (sysml2_modify_statement_endpoint_deleted(node->redefines[i], node->parent_id, deleted_ids, deleted_count, arena, intern)) continue;
+            redefines[kept++] = node->redefines[i];
+        }
+        node->redefines = redefines;
+        node->redefines_count = kept;
+    }
+
+    if (node->references_count > 0 && node->references) {
+        const char **references = sysml2_arena_alloc(arena, node->references_count * sizeof(const char *));
+        size_t kept = 0;
+        for (size_t i = 0; i < node->references_count; i++) {
+            if (sysml2_modify_statement_endpoint_deleted(node->references[i], node->parent_id, deleted_ids, deleted_count, arena, intern)) continue;
+            references[kept++] = node->references[i];
+        }
+        node->references = references;
+        node->references_count = kept;
+    }
 }
 
 /*
@@ -1532,24 +1783,7 @@ SysmlSemanticModel *sysml2_modify_merge_fragment(
                         }
                     }
 
-                    /* Helper: check if original statement duplicates fragment */
-                    #define STMT_IS_DUPLICATE(orig_stmt) ({ \
-                        bool _dup = false; \
-                        const char *_name = sysml2_extract_shorthand_stmt_name( \
-                            (orig_stmt)->raw_text, arena, intern); \
-                        if (_name && id_in_set(_name, frag_names, frag_name_count)) { \
-                            _dup = true; \
-                        } else { \
-                            /* Also check raw_text equivalence for whitespace diffs */ \
-                            for (size_t _r = 0; _r < frag_raw_count; _r++) { \
-                                if (sysml2_shorthand_stmt_equivalent((orig_stmt)->raw_text, frag_raw_texts[_r])) { \
-                                    _dup = true; \
-                                    break; \
-                                } \
-                            } \
-                        } \
-                        _dup; \
-                    })
+                    /* Count original statements not in fragment */
 
                     /* Count original statements not in fragment */
                     size_t preserve_count = 0;
@@ -1561,7 +1795,7 @@ SysmlSemanticModel *sysml2_modify_merge_fragment(
                             /* Never preserve :>> doc — 'doc' is a keyword, not a redefinable feature */
                             const char *_pname = sysml2_extract_shorthand_stmt_name(stmt->raw_text, arena, intern);
                             if (_pname && strcmp(_pname, "doc") == 0) continue;
-                            if (!STMT_IS_DUPLICATE(stmt)) {
+                            if (!sysml2_modify_shorthand_stmt_is_duplicate(stmt, frag_names, frag_name_count, frag_raw_texts, frag_raw_count, arena, intern)) {
                                 preserve_count++;
                             }
                         }
@@ -1586,7 +1820,7 @@ SysmlSemanticModel *sysml2_modify_merge_fragment(
                                 if (stmt->kind == SYSML_STMT_SHORTHAND_FEATURE && stmt->raw_text) {
                                     const char *_pname = sysml2_extract_shorthand_stmt_name(stmt->raw_text, arena, intern);
                                     if (_pname && strcmp(_pname, "doc") == 0) continue;
-                                    if (!STMT_IS_DUPLICATE(stmt)) {
+                                    if (!sysml2_modify_shorthand_stmt_is_duplicate(stmt, frag_names, frag_name_count, frag_raw_texts, frag_raw_count, arena, intern)) {
                                         merged[idx++] = sysml2_modify_copy_statement(stmt, arena);
                                     }
                                 }
@@ -1597,7 +1831,6 @@ SysmlSemanticModel *sysml2_modify_merge_fragment(
                         }
                     }
 
-                    #undef STMT_IS_DUPLICATE
                 }
 
                 result->elements[result->element_count++] = new_node;
@@ -1745,24 +1978,7 @@ SysmlSemanticModel *sysml2_modify_merge_fragment(
                         }
                     }
 
-                    /* Helper: check if original statement duplicates fragment */
-                    #define STMT_IS_DUPLICATE2(orig_stmt) ({ \
-                        bool _dup = false; \
-                        const char *_name = sysml2_extract_shorthand_stmt_name( \
-                            (orig_stmt)->raw_text, arena, intern); \
-                        if (_name && id_in_set(_name, frag_names, frag_name_count)) { \
-                            _dup = true; \
-                        } else { \
-                            /* Also check raw_text equivalence for whitespace diffs */ \
-                            for (size_t _r = 0; _r < frag_raw_count; _r++) { \
-                                if (sysml2_shorthand_stmt_equivalent((orig_stmt)->raw_text, frag_raw_texts[_r])) { \
-                                    _dup = true; \
-                                    break; \
-                                } \
-                            } \
-                        } \
-                        _dup; \
-                    })
+                    /* Count original statements not in fragment */
 
                     /* Count original statements not in fragment */
                     size_t preserve_count = 0;
@@ -1775,7 +1991,7 @@ SysmlSemanticModel *sysml2_modify_merge_fragment(
                             /* Never preserve :>> doc — 'doc' is a keyword, not a redefinable feature */
                             const char *_pname = sysml2_extract_shorthand_stmt_name(stmt->raw_text, arena, intern);
                             if (_pname && strcmp(_pname, "doc") == 0) continue;
-                            if (!STMT_IS_DUPLICATE2(stmt)) {
+                            if (!sysml2_modify_shorthand_stmt_is_duplicate(stmt, frag_names, frag_name_count, frag_raw_texts, frag_raw_count, arena, intern)) {
                                 preserve_count++;
                             }
                         }
@@ -1804,7 +2020,7 @@ SysmlSemanticModel *sysml2_modify_merge_fragment(
                                 if (stmt->kind == SYSML_STMT_SHORTHAND_FEATURE && stmt->raw_text) {
                                     const char *_pname = sysml2_extract_shorthand_stmt_name(stmt->raw_text, arena, intern);
                                     if (_pname && strcmp(_pname, "doc") == 0) continue;
-                                    if (!STMT_IS_DUPLICATE2(stmt)) {
+                                    if (!sysml2_modify_shorthand_stmt_is_duplicate(stmt, frag_names, frag_name_count, frag_raw_texts, frag_raw_count, arena, intern)) {
                                         /* Deep copy the preserved statement */
                                         merged[idx++] = sysml2_modify_copy_statement(stmt, arena);
                                     }
@@ -1816,7 +2032,6 @@ SysmlSemanticModel *sysml2_modify_merge_fragment(
                         }
                     }
 
-                    #undef STMT_IS_DUPLICATE2
                 }
             }
         } else {

@@ -39,11 +39,17 @@ char *sysml2_read_file(const char *path, size_t *out_size) {
     }
 
     size_t read = fread(content, 1, size, file);
+    bool read_ok = (read == (size_t)size) && ferror(file) == 0;
     fclose(file);
 
-    content[read] = '\0';
+    if (!read_ok) {
+        free(content);
+        return NULL;
+    }
+
+    content[size] = '\0';
     if (out_size) {
-        *out_size = read;
+        *out_size = size;
     }
 
     return content;
@@ -68,7 +74,10 @@ char *sysml2_read_stdin(size_t *out_size) {
             content = new_content;
         }
     }
-
+    if (ferror(stdin) != 0) {
+        free(content);
+        return NULL;
+    }
     content[length] = '\0';
     if (out_size) *out_size = length;
     return content;
@@ -304,13 +313,19 @@ static bool inode_tracker_has(InodeTracker *tracker, dev_t dev, ino_t ino) {
 static bool inode_tracker_add(InodeTracker *tracker, dev_t dev, ino_t ino) {
     if (tracker->count >= tracker->capacity) {
         size_t new_cap = tracker->capacity == 0 ? 16 : tracker->capacity * 2;
-        dev_t *new_devices = realloc(tracker->devices, new_cap * sizeof(dev_t));
-        ino_t *new_inodes = realloc(tracker->inodes, new_cap * sizeof(ino_t));
+        dev_t *new_devices = malloc(new_cap * sizeof(dev_t));
+        ino_t *new_inodes = malloc(new_cap * sizeof(ino_t));
         if (!new_devices || !new_inodes) {
             free(new_devices);
             free(new_inodes);
             return false;
         }
+        if (tracker->count > 0) {
+            memcpy(new_devices, tracker->devices, tracker->count * sizeof(dev_t));
+            memcpy(new_inodes, tracker->inodes, tracker->count * sizeof(ino_t));
+        }
+        free(tracker->devices);
+        free(tracker->inodes);
         tracker->devices = new_devices;
         tracker->inodes = new_inodes;
         tracker->capacity = new_cap;

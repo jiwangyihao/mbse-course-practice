@@ -70,11 +70,7 @@ export function createWorkbenchProjectState(
   ];
   if (sidecarDraft) {
     files.push(
-      {
-        path: `sample-projects/${project.manifest.id}/sidecar/agent-model-draft.sysml`,
-        mediaType: 'text/x-sysml',
-        content: sidecarDraft.sysmlText,
-      },
+      ...buildSidecarDraftSourceFiles(project.manifest.id, sidecarDraft),
       {
         path: `sample-projects/${project.manifest.id}/sidecar/agent-model-draft-view-model.json`,
         mediaType: 'application/json',
@@ -150,22 +146,16 @@ export function listWorkbenchProjectResources(state: SavedWorkbenchProjectState)
     });
   }
   if (state.sidecarDraft) {
+    const sidecarDraft = state.sidecarDraft;
     resources.push(
-      {
-        id: 'sidecar-draft-sysml',
-        title: 'Sidecar 草案 SysML v2',
-        kind: 'Sidecar 草案',
-        path: `sample-projects/${state.manifest.id}/sidecar/agent-model-draft.sysml`,
-        mediaType: 'text/x-sysml',
-        content: state.sidecarDraft.sysmlText,
-      },
+      ...buildSidecarDraftSourceResources(state.manifest.id, sidecarDraft),
       {
         id: 'sidecar-draft-view-model',
         title: 'Sidecar 草案视图模型 JSON',
         kind: 'Sidecar 草案',
         path: `sample-projects/${state.manifest.id}/sidecar/agent-model-draft-view-model.json`,
         mediaType: 'application/json',
-        content: JSON.stringify(state.sidecarDraft.viewModel, null, 2),
+        content: JSON.stringify(sidecarDraft.viewModel, null, 2),
       },
       {
         id: 'sidecar-draft-validation',
@@ -173,7 +163,7 @@ export function listWorkbenchProjectResources(state: SavedWorkbenchProjectState)
         kind: 'Sidecar 草案',
         path: `sample-projects/${state.manifest.id}/sidecar/agent-model-draft-validation.json`,
         mediaType: 'application/json',
-        content: JSON.stringify(state.sidecarDraft.validation, null, 2),
+        content: JSON.stringify(sidecarDraft.validation, null, 2),
       },
     );
   }
@@ -192,16 +182,51 @@ export function validationArtifactPath(projectId: string) {
   return `sample-projects/${projectId}/model/validation-result.json`;
 }
 
+function sidecarDraftSourceRoot(projectId: string, draft: ModelGenerationResult) {
+  const base = `sample-projects/${projectId}/sidecar/agent-model-draft`;
+  return draft.sourceSet.rootDir === '' ? base : `${base}/${draft.sourceSet.rootDir}`;
+}
+
+function sidecarDraftSourceFilePath(projectId: string, draft: ModelGenerationResult, relativePath: string) {
+  return `${sidecarDraftSourceRoot(projectId, draft)}/${relativePath}`;
+}
+
+function sidecarDraftSourceResourceId(relativePath: string) {
+  return `sidecar-draft-source-${relativePath.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '')}`;
+}
+
+function buildSidecarDraftSourceFiles(projectId: string, draft: ModelGenerationResult): PersistedProjectFile[] {
+  return draft.sourceSet.files.map((file) => ({
+    path: sidecarDraftSourceFilePath(projectId, draft, file.path),
+    mediaType: 'text/x-sysml',
+    content: file.content,
+  }));
+}
+
+function buildSidecarDraftSourceResources(projectId: string, draft: ModelGenerationResult): WorkbenchProjectResource[] {
+  return draft.sourceSet.files.map((file) => ({
+    id: sidecarDraftSourceResourceId(file.path),
+    title: `Sidecar 草案 SysML v2：${file.path}`,
+    kind: 'Sidecar 草案',
+    path: sidecarDraftSourceFilePath(projectId, draft, file.path),
+    mediaType: 'text/x-sysml',
+    content: file.content,
+  }));
+}
+
 function hydrateModelArtifact(artifact: ModelArtifact, generatedArtifacts: ModelGenerationResult | null): ModelArtifact {
   if (!generatedArtifacts) {
     return { ...artifact };
   }
 
   if (artifact.kind === 'sysml-v2') {
+    const relativePath = artifact.path.replace(/^sample-projects\/[^/]+\/model\//, '');
+    const file = generatedArtifacts.sourceSet.files.find((candidate) => candidate.path === relativePath)
+      ?? generatedArtifacts.sourceSet.files.find((candidate) => candidate.path === generatedArtifacts.sourceSet.entryPath);
     return {
       ...artifact,
       placeholder: false,
-      content: generatedArtifacts.sysmlText,
+      content: file?.content ?? '',
     };
   }
 

@@ -21,7 +21,18 @@
 #include <getopt.h>
 #include <errno.h>
 #include <limits.h>
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#include <io.h>
+#include <process.h>
+#include <windows.h>
+#define SYSML2_UNLINK _unlink
+#define SYSML2_GETPID _getpid
+#else
 #include <unistd.h>
+#define SYSML2_UNLINK unlink
+#define SYSML2_GETPID getpid
+#endif
 
 /*
  * Helper: Atomic file write using temp file + rename
@@ -36,10 +47,16 @@ static bool atomic_write_file(
     SysmlSemanticModel *model,
     const char *verbose_msg
 ) {
-    char tmp_path[PATH_MAX];
-    int len = snprintf(tmp_path, sizeof(tmp_path), "%s.tmp.%d", path, getpid());
-    if (len < 0 || (size_t)len >= sizeof(tmp_path)) {
+    size_t tmp_path_len = strlen(path) + 32;
+    char *tmp_path = malloc(tmp_path_len);
+    if (!tmp_path) {
+        fprintf(stderr, "error: out of memory building temp path for '%s'\n", path);
+        return false;
+    }
+    int len = snprintf(tmp_path, tmp_path_len, "%s.tmp.%d", path, SYSML2_GETPID());
+    if (len < 0 || (size_t)len >= tmp_path_len) {
         fprintf(stderr, "error: path too long for temp file: %s\n", path);
+        free(tmp_path);
         return false;
     }
 
@@ -48,6 +65,7 @@ static bool atomic_write_file(
     if (!out) {
         fprintf(stderr, "error: cannot create temp file '%s': %s\n",
                 tmp_path, strerror(errno));
+        free(tmp_path);
         return false;
     }
 
@@ -57,29 +75,43 @@ static bool atomic_write_file(
     if (ferror(out)) {
         fprintf(stderr, "error: write failed to temp file '%s'\n", tmp_path);
         fclose(out);
-        unlink(tmp_path);
+        SYSML2_UNLINK(tmp_path);
+        free(tmp_path);
         return false;
     }
 
     if (fclose(out) != 0) {
         fprintf(stderr, "error: failed to close temp file '%s': %s\n",
                 tmp_path, strerror(errno));
-        unlink(tmp_path);
+        SYSML2_UNLINK(tmp_path);
+        free(tmp_path);
         return false;
     }
 
     /* Atomic rename - this preserves original file until this succeeds */
+#if defined(_WIN32)
+    if (!MoveFileExA(tmp_path, path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        fprintf(stderr, "error: failed to rename temp file '%s' to '%s': %lu\n",
+                tmp_path, path, GetLastError());
+        SYSML2_UNLINK(tmp_path);
+        free(tmp_path);
+        return false;
+    }
+#else
     if (rename(tmp_path, path) != 0) {
         fprintf(stderr, "error: failed to rename temp file '%s' to '%s': %s\n",
                 tmp_path, path, strerror(errno));
-        unlink(tmp_path);
+        SYSML2_UNLINK(tmp_path);
+        free(tmp_path);
         return false;
     }
+#endif
 
     if (verbose_msg) {
         fprintf(stderr, "%s: %s\n", verbose_msg, path);
     }
 
+    free(tmp_path);
     return true;
 }
 

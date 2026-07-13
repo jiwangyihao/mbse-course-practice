@@ -1,8 +1,9 @@
 import React from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { vi } from 'vitest';
-import { extractTianwen2ConfirmedData, generateTianwen2ModelArtifacts, validateViewModel } from '../src/domain/modelGeneration';
+import { extractTianwen2ConfirmedData, validateViewModel } from '../src/domain/modelGeneration';
 import type { ModelGenerationResult } from '../src/domain/modelGeneration';
+import { loadNodeGeneratedDraft } from './helpers/generatedDraft';
 import { createAgentSidecarClient } from '../src/domain/agentSidecar';
 import type { AgentModelingSession, AgentSidecarEvent, AgentSidecarStatus } from '../src/domain/agentSidecar';
 import App from '../src/App';
@@ -29,14 +30,10 @@ const sourceText = [
   '航天器平台应为载荷、推进、能源、热控和测控通信分系统提供统一承载。',
 ].join('\n');
 
-function createValidAgentDraft(sessionId = 'ui-agent-draft-session'): ModelGenerationResult {
-  const draft = generateTianwen2ModelArtifacts(extractTianwen2ConfirmedData(sourceText));
+async function createValidAgentDraft(sessionId = 'ui-agent-draft-session'): Promise<ModelGenerationResult> {
+  const draft = await loadNodeGeneratedDraft();
   return {
     ...draft,
-    viewModel: {
-      ...draft.viewModel,
-      source: 'sdk-agent-generated',
-    },
     provenance: {
       mode: 'sdk-agent',
       provider: 'test-provider',
@@ -181,7 +178,7 @@ describe('Agent Sidecar 客户端契约', () => {
   it('用户确认抽取结果后才请求模型草案', async () => {
     const calls: InvokeCall[] = [];
     const confirmedData = extractTianwen2ConfirmedData(sourceText);
-    const draft = createValidAgentDraft();
+    const draft = await createValidAgentDraft();
     const session: AgentModelingSession = {
       sessionId: 'agent-draft-session-issue-4',
       events: [
@@ -216,7 +213,7 @@ describe('Agent Sidecar 客户端契约', () => {
     ]);
     expect(result.events.map((event) => event.type)).toEqual(expect.arrayContaining(['progress', 'suggestion', 'model-draft']));
     expect(result.events.map((event) => event.type)).not.toContain('extraction');
-    expect(modelDraftEvent.draft.sysmlText, '模型草案事件应携带可渲染的 SysML v2 文本模型').toContain('package');
+    expect(modelDraftEvent.draft.sourceSet.files.some((file) => file.content.includes('package')), '模型草案事件应携带完整 SysML source set').toBe(true);
     expect(suggestionEvent, '草案生成阶段应返回指向模型草案修正的结构化建议，不能只给空事件').toMatchObject({
       target: 'model-draft',
       recommendation: expect.stringMatching(/追溯覆盖|模型草案|BDD/),
@@ -226,7 +223,7 @@ describe('Agent Sidecar 客户端契约', () => {
 
   it('模型草案事件携带的 JSON 视图模型通过校验并包含 requirements 与 bdd 视图', async () => {
     const confirmedData = extractTianwen2ConfirmedData(sourceText);
-    const draft = createValidAgentDraft();
+    const draft = await createValidAgentDraft();
     const session: AgentModelingSession = {
       sessionId: 'agent-session-valid-draft',
       events: [
@@ -261,9 +258,9 @@ describe('Agent Sidecar 客户端契约', () => {
 
 });
 
-function mockTauriSidecarForUi() {
+async function mockTauriSidecarForUi() {
   const confirmedData = extractTianwen2ConfirmedData(sourceText);
-  const draft = createValidAgentDraft();
+  const draft = await createValidAgentDraft();
   const extractionSession: AgentModelingSession = {
     sessionId: 'ui-agent-extraction-session',
     events: [
@@ -307,7 +304,7 @@ describe('Agent Sidecar 用户路径契约', () => {
   it('工作台提供启动停止入口，并允许用户确认或拒绝 Sidecar 本地草案后生成完整工作台工件', async () => {
     const expectedConfirmedData = extractTianwen2ConfirmedData(sourceText);
 
-    mockTauriSidecarForUi();
+    await mockTauriSidecarForUi();
     render(React.createElement(App));
 
     expect(screen.getByText(/Agent Sidecar 状态/), '工作台应显式展示 Agent Sidecar 运行状态').toBeVisible();
@@ -384,7 +381,7 @@ describe('Agent Sidecar 用户路径契约', () => {
 
   it('拒绝保存缺少真实 SDK Agent provenance 的最终工件', async () => {
     const confirmedData = extractTianwen2ConfirmedData(sourceText);
-    const invalidDraft = generateTianwen2ModelArtifacts(confirmedData);
+    const invalidDraft = await loadNodeGeneratedDraft();
 
     tauriInvokeMock.mockImplementation(async (command: string) => {
       if (command === 'agent_sidecar_status') return { state: 'stopped', pid: null, endpoint: null };

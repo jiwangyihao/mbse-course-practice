@@ -1,7 +1,7 @@
 {
   "schemaVersion": "0.4.0",
   "projectId": "tianwen-2",
-  "source": "confirmed-import-data",
+  "source": "sysml-source-set-derived",
   "generatedFrom": "Tianwen2ConfirmedModel",
   "views": [
     {
@@ -29,8 +29,8 @@
           "text": "探测器应在深空巡航阶段维持姿态、能源和热控安全边界。",
           "elementId": "REQ-TW2-002",
           "position": {
-            "x": 320,
-            "y": 158
+            "x": 40,
+            "y": 150
           }
         },
         {
@@ -40,8 +40,8 @@
           "text": "探测器应通过测控通信链路下传工程遥测与科学数据。",
           "elementId": "REQ-TW2-003",
           "position": {
-            "x": 320,
-            "y": 276
+            "x": 40,
+            "y": 260
           }
         },
         {
@@ -51,38 +51,8 @@
           "text": "探测器应保留模型工件与需求、结构、行为视图之间的追溯关系。",
           "elementId": "REQ-TW2-004",
           "position": {
-            "x": 320,
-            "y": 394
-          }
-        },
-        {
-          "id": "spacecraft-platform",
-          "kind": "subsystem",
-          "label": "航天器平台",
-          "elementId": "spacecraft-platform",
-          "position": {
-            "x": 680,
-            "y": 40
-          }
-        },
-        {
-          "id": "sampling-return",
-          "kind": "subsystem",
-          "label": "采样返回分系统",
-          "elementId": "sampling-return",
-          "position": {
-            "x": 680,
-            "y": 158
-          }
-        },
-        {
-          "id": "power-thermal",
-          "kind": "subsystem",
-          "label": "电源与热控分系统",
-          "elementId": "power-thermal",
-          "position": {
-            "x": 680,
-            "y": 276
+            "x": 40,
+            "y": 370
           }
         },
         {
@@ -91,8 +61,38 @@
           "label": "制导导航与控制分系统",
           "elementId": "gnc",
           "position": {
-            "x": 680,
-            "y": 394
+            "x": 640,
+            "y": 40
+          }
+        },
+        {
+          "id": "power-thermal",
+          "kind": "subsystem",
+          "label": "电源与热控分系统",
+          "elementId": "power-thermal",
+          "position": {
+            "x": 640,
+            "y": 150
+          }
+        },
+        {
+          "id": "sampling-return",
+          "kind": "subsystem",
+          "label": "采样返回分系统",
+          "elementId": "sampling-return",
+          "position": {
+            "x": 640,
+            "y": 260
+          }
+        },
+        {
+          "id": "spacecraft-platform",
+          "kind": "system",
+          "label": "航天器平台",
+          "elementId": "spacecraft-platform",
+          "position": {
+            "x": 640,
+            "y": 370
           }
         },
         {
@@ -101,8 +101,8 @@
           "label": "测控通信分系统",
           "elementId": "ttc-communication",
           "position": {
-            "x": 680,
-            "y": 512
+            "x": 640,
+            "y": 480
           }
         }
       ],
@@ -194,6 +194,36 @@
       "layoutEngine": "deterministic-layered-layout",
       "nodes": [
         {
+          "id": "gnc",
+          "kind": "subsystem",
+          "label": "制导导航与控制分系统",
+          "elementId": "gnc",
+          "position": {
+            "x": 80,
+            "y": 220
+          }
+        },
+        {
+          "id": "power-thermal",
+          "kind": "subsystem",
+          "label": "电源与热控分系统",
+          "elementId": "power-thermal",
+          "position": {
+            "x": 300,
+            "y": 220
+          }
+        },
+        {
+          "id": "sampling-return",
+          "kind": "subsystem",
+          "label": "采样返回分系统",
+          "elementId": "sampling-return",
+          "position": {
+            "x": 520,
+            "y": 220
+          }
+        },
+        {
           "id": "spacecraft-platform",
           "kind": "system",
           "label": "航天器平台",
@@ -204,42 +234,12 @@
           }
         },
         {
-          "id": "sampling-return",
-          "kind": "subsystem",
-          "label": "采样返回分系统",
-          "elementId": "sampling-return",
-          "position": {
-            "x": 80,
-            "y": 220
-          }
-        },
-        {
           "id": "ttc-communication",
           "kind": "subsystem",
           "label": "测控通信分系统",
           "elementId": "ttc-communication",
           "position": {
-            "x": 310,
-            "y": 220
-          }
-        },
-        {
-          "id": "power-thermal",
-          "kind": "subsystem",
-          "label": "电源与热控分系统",
-          "elementId": "power-thermal",
-          "position": {
-            "x": 540,
-            "y": 220
-          }
-        },
-        {
-          "id": "gnc",
-          "kind": "subsystem",
-          "label": "制导导航与控制分系统",
-          "elementId": "gnc",
-          "position": {
-            "x": 770,
+            "x": 960,
             "y": 220
           }
         }
@@ -276,218 +276,6 @@
       ]
     },
     {
-      "id": "ibd-internal-block-view",
-      "title": "IBD 内部块图",
-      "kind": "ibd",
-      "layout": "auto",
-      "layoutEngine": "elk-layered",
-      "nodes": [
-        {
-          "id": "spacecraft-platform",
-          "kind": "ibd-part",
-          "label": "航天器平台",
-          "elementId": "spacecraft-platform",
-          "position": {
-            "x": 320,
-            "y": 40
-          },
-          "text": "IBD 边界部件，承载内部连接。"
-        },
-        {
-          "id": "sampling-return",
-          "kind": "ibd-part",
-          "label": "采样返回分系统",
-          "elementId": "sampling-return",
-          "position": {
-            "x": 80,
-            "y": 220
-          },
-          "text": "IBD 内部部件，端口参与连接校验。"
-        },
-        {
-          "id": "ttc-communication",
-          "kind": "ibd-part",
-          "label": "测控通信分系统",
-          "elementId": "ttc-communication",
-          "position": {
-            "x": 310,
-            "y": 220
-          },
-          "text": "IBD 内部部件，端口参与连接校验。"
-        },
-        {
-          "id": "power-thermal",
-          "kind": "ibd-part",
-          "label": "电源与热控分系统",
-          "elementId": "power-thermal",
-          "position": {
-            "x": 540,
-            "y": 220
-          },
-          "text": "IBD 内部部件，端口参与连接校验。"
-        },
-        {
-          "id": "gnc",
-          "kind": "ibd-part",
-          "label": "制导导航与控制分系统",
-          "elementId": "gnc",
-          "position": {
-            "x": 770,
-            "y": 220
-          },
-          "text": "IBD 内部部件，端口参与连接校验。"
-        }
-      ],
-      "edges": [
-        {
-          "id": "connection-sample-transfer-to-platform",
-          "kind": "connection",
-          "source": "sampling-return",
-          "target": "spacecraft-platform",
-          "sourcePort": "sample-transfer-out",
-          "targetPort": "sample-return-mechanical-interface",
-          "label": "样品转移连接"
-        },
-        {
-          "id": "connection-sample-telemetry-to-ttc",
-          "kind": "connection",
-          "source": "sampling-return",
-          "target": "ttc-communication",
-          "sourcePort": "sample-telemetry-out",
-          "targetPort": "data-bus-in",
-          "label": "采样遥测数据连接"
-        },
-        {
-          "id": "connection-power-thermal-to-sampling",
-          "kind": "connection",
-          "source": "power-thermal",
-          "target": "sampling-return",
-          "sourcePort": "power-thermal-service",
-          "targetPort": "sample-power-thermal-in",
-          "label": "供电与热控连接"
-        },
-        {
-          "id": "connection-gnc-data-to-ttc",
-          "kind": "connection",
-          "source": "gnc",
-          "target": "ttc-communication",
-          "sourcePort": "attitude-control-data",
-          "targetPort": "telemetry-downlink",
-          "label": "姿态遥测数据连接"
-        }
-      ],
-      "ports": [
-        {
-          "id": "sample-return-mechanical-interface",
-          "label": "样品转移接口",
-          "kind": "sample",
-          "ownerId": "spacecraft-platform",
-          "interfaceId": "sample-transfer"
-        },
-        {
-          "id": "platform-power-thermal-bus",
-          "label": "平台供电与热控接口",
-          "kind": "power",
-          "ownerId": "spacecraft-platform",
-          "interfaceId": "power-thermal"
-        },
-        {
-          "id": "sample-transfer-out",
-          "label": "样品转移与封装接口",
-          "kind": "sample",
-          "ownerId": "sampling-return",
-          "interfaceId": "sample-transfer"
-        },
-        {
-          "id": "sample-telemetry-out",
-          "label": "采样遥测数据接口",
-          "kind": "data",
-          "ownerId": "sampling-return",
-          "interfaceId": "telemetry-data"
-        },
-        {
-          "id": "sample-power-thermal-in",
-          "label": "采样供电与热控接口",
-          "kind": "power",
-          "ownerId": "sampling-return",
-          "interfaceId": "power-thermal"
-        },
-        {
-          "id": "data-bus-in",
-          "label": "遥测数据接收接口",
-          "kind": "data",
-          "ownerId": "ttc-communication",
-          "interfaceId": "telemetry-data"
-        },
-        {
-          "id": "telemetry-downlink",
-          "label": "测控通信下传接口",
-          "kind": "data",
-          "ownerId": "ttc-communication",
-          "interfaceId": "telemetry-data"
-        },
-        {
-          "id": "power-thermal-service",
-          "label": "供电与热控服务接口",
-          "kind": "power",
-          "ownerId": "power-thermal",
-          "interfaceId": "power-thermal"
-        },
-        {
-          "id": "thermal-control",
-          "label": "热控接口",
-          "kind": "thermal",
-          "ownerId": "power-thermal",
-          "interfaceId": "power-thermal"
-        },
-        {
-          "id": "attitude-control-data",
-          "label": "姿态控制数据接口",
-          "kind": "control",
-          "ownerId": "gnc",
-          "interfaceId": "telemetry-data"
-        }
-      ],
-      "connections": [
-        {
-          "id": "connection-sample-transfer-to-platform",
-          "kind": "connection",
-          "source": "sampling-return",
-          "target": "spacecraft-platform",
-          "sourcePort": "sample-transfer-out",
-          "targetPort": "sample-return-mechanical-interface",
-          "label": "样品转移连接"
-        },
-        {
-          "id": "connection-sample-telemetry-to-ttc",
-          "kind": "connection",
-          "source": "sampling-return",
-          "target": "ttc-communication",
-          "sourcePort": "sample-telemetry-out",
-          "targetPort": "data-bus-in",
-          "label": "采样遥测数据连接"
-        },
-        {
-          "id": "connection-power-thermal-to-sampling",
-          "kind": "connection",
-          "source": "power-thermal",
-          "target": "sampling-return",
-          "sourcePort": "power-thermal-service",
-          "targetPort": "sample-power-thermal-in",
-          "label": "供电与热控连接"
-        },
-        {
-          "id": "connection-gnc-data-to-ttc",
-          "kind": "connection",
-          "source": "gnc",
-          "target": "ttc-communication",
-          "sourcePort": "attitude-control-data",
-          "targetPort": "telemetry-downlink",
-          "label": "姿态遥测数据连接"
-        }
-      ]
-    },
-    {
       "id": "activity-flow-view",
       "title": "活动图",
       "kind": "activity",
@@ -495,22 +283,22 @@
       "layoutEngine": "deterministic-layered-layout",
       "nodes": [
         {
-          "id": "activity-sample-return",
+          "id": "activity-cruise-safety",
           "kind": "activity",
-          "label": "近地小行星取样返回",
-          "text": "接近目标小行星，执行近距离探测、采样封装与返回准备。",
-          "elementId": "activity-sample-return",
+          "label": "深空巡航安全维持",
+          "text": "在深空巡航阶段维持姿态、能源和热控安全边界。",
+          "elementId": "activity-cruise-safety",
           "position": {
             "x": 80,
             "y": 140
           }
         },
         {
-          "id": "activity-cruise-safety",
+          "id": "activity-sample-return",
           "kind": "activity",
-          "label": "深空巡航安全维持",
-          "text": "在深空巡航阶段维持姿态、能源和热控安全边界。",
-          "elementId": "activity-cruise-safety",
+          "label": "近地小行星取样返回",
+          "text": "接近目标小行星，执行近距离探测、采样封装与返回准备。",
+          "elementId": "activity-sample-return",
           "position": {
             "x": 320,
             "y": 140
@@ -541,160 +329,25 @@
       ],
       "edges": [
         {
-          "id": "flow-activity-sample-return-activity-cruise-safety",
+          "id": "Tianwen2ConfirmedModel::mission_sequence::_flow_1",
           "kind": "flow",
           "source": "activity-sample-return",
           "target": "activity-cruise-safety",
           "label": "活动流"
         },
         {
-          "id": "flow-activity-cruise-safety-activity-telemetry-downlink",
+          "id": "Tianwen2ConfirmedModel::mission_sequence::_flow_2",
           "kind": "flow",
           "source": "activity-cruise-safety",
           "target": "activity-telemetry-downlink",
           "label": "活动流"
         },
         {
-          "id": "flow-activity-telemetry-downlink-activity-trace-coverage-check",
+          "id": "Tianwen2ConfirmedModel::mission_sequence::_flow_3",
           "kind": "flow",
           "source": "activity-telemetry-downlink",
           "target": "activity-trace-coverage-check",
           "label": "活动流"
-        }
-      ]
-    },
-    {
-      "id": "parameter-constraints-view",
-      "title": "参数约束视图",
-      "kind": "parameter-constraints",
-      "layout": "auto",
-      "layoutEngine": "deterministic-layered-layout",
-      "nodes": [
-        {
-          "id": "constraint-mass-budget",
-          "kind": "constraint",
-          "label": "质量预算约束",
-          "text": "spacecraft-dry-mass <= 1000 kg",
-          "elementId": "constraint-mass-budget",
-          "position": {
-            "x": 80,
-            "y": 80
-          }
-        },
-        {
-          "id": "constraint-power-budget",
-          "kind": "constraint",
-          "label": "电源输出约束",
-          "text": "solar-array-output >= 2000 W",
-          "elementId": "constraint-power-budget",
-          "position": {
-            "x": 80,
-            "y": 240
-          }
-        },
-        {
-          "id": "spacecraft-dry-mass",
-          "kind": "parameter",
-          "label": "探测器干质量",
-          "text": "单位：kg",
-          "elementId": "spacecraft-dry-mass",
-          "position": {
-            "x": 420,
-            "y": 80
-          }
-        },
-        {
-          "id": "solar-array-output",
-          "kind": "parameter",
-          "label": "太阳翼输出功率",
-          "text": "单位：W",
-          "elementId": "solar-array-output",
-          "position": {
-            "x": 420,
-            "y": 240
-          }
-        }
-      ],
-      "edges": [
-        {
-          "id": "binding-mass-budget-dry-mass",
-          "kind": "binding",
-          "source": "constraint-mass-budget",
-          "target": "spacecraft-dry-mass",
-          "label": "质量参数绑定"
-        },
-        {
-          "id": "binding-power-budget-solar-array-output",
-          "kind": "binding",
-          "source": "constraint-power-budget",
-          "target": "solar-array-output",
-          "label": "功率参数绑定"
-        }
-      ],
-      "constraints": [
-        {
-          "id": "constraint-mass-budget",
-          "label": "质量预算约束",
-          "expression": "spacecraft-dry-mass <= 1000 kg",
-          "relatedElementIds": [
-            "spacecraft-platform",
-            "sampling-return"
-          ]
-        },
-        {
-          "id": "constraint-power-budget",
-          "label": "电源输出约束",
-          "expression": "solar-array-output >= 2000 W",
-          "relatedElementIds": [
-            "power-thermal",
-            "spacecraft-platform"
-          ]
-        }
-      ],
-      "parameters": [
-        {
-          "id": "spacecraft-dry-mass",
-          "label": "探测器干质量",
-          "unit": "kg",
-          "unitSymbol": "kg",
-          "relatedElementIds": [
-            "spacecraft-platform",
-            "sampling-return"
-          ]
-        },
-        {
-          "id": "solar-array-output",
-          "label": "太阳翼输出功率",
-          "unit": "W",
-          "unitSymbol": "W",
-          "relatedElementIds": [
-            "power-thermal",
-            "spacecraft-platform"
-          ]
-        }
-      ],
-      "bindings": [
-        {
-          "id": "binding-mass-budget-dry-mass",
-          "kind": "binding",
-          "constraintId": "constraint-mass-budget",
-          "parameterId": "spacecraft-dry-mass",
-          "label": "质量参数绑定",
-          "relatedElementIds": [
-            "spacecraft-platform",
-            "sampling-return"
-          ]
-        },
-        {
-          "id": "binding-power-budget-solar-array-output",
-          "kind": "binding",
-          "constraintId": "constraint-power-budget",
-          "parameterId": "solar-array-output",
-          "label": "功率参数绑定",
-          "relatedElementIds": [
-            "power-thermal",
-            "spacecraft-platform"
-          ]
         }
       ]
     },
@@ -782,6 +435,42 @@
           "elementId": "activity-trace-coverage-check",
           "kind": "behavior",
           "label": "模型工件追溯覆盖校验"
+        },
+        {
+          "id": "connection-sample-transfer-to-platform",
+          "elementId": "connection-sample-transfer-to-platform",
+          "kind": "interface",
+          "label": "样品转移接口"
+        },
+        {
+          "id": "connection-sample-telemetry-to-ttc",
+          "elementId": "connection-sample-telemetry-to-ttc",
+          "kind": "interface",
+          "label": "采样遥测数据接口"
+        },
+        {
+          "id": "connection-power-thermal-to-sampling",
+          "elementId": "connection-power-thermal-to-sampling",
+          "kind": "interface",
+          "label": "供电与热控接口"
+        },
+        {
+          "id": "connection-gnc-data-to-ttc",
+          "elementId": "connection-gnc-data-to-ttc",
+          "kind": "interface",
+          "label": "姿态遥测数据接口"
+        },
+        {
+          "id": "constraint-mass-budget",
+          "elementId": "constraint-mass-budget",
+          "kind": "constraint",
+          "label": "质量预算约束"
+        },
+        {
+          "id": "constraint-power-budget",
+          "elementId": "constraint-power-budget",
+          "kind": "constraint",
+          "label": "电源输出约束"
         }
       ],
       "cells": [
@@ -790,14 +479,14 @@
           "requirementId": "REQ-TW2-001",
           "columnId": "spacecraft-platform",
           "covered": true,
-          "evidence": "REQ-TW2-001 satisfy 航天器平台"
+          "evidence": "REQ-TW2-001 satisfy spacecraft-platform"
         },
         {
           "rowId": "REQ-TW2-001",
           "requirementId": "REQ-TW2-001",
           "columnId": "sampling-return",
           "covered": true,
-          "evidence": "REQ-TW2-001 satisfy 采样返回分系统"
+          "evidence": "REQ-TW2-001 satisfy sampling-return"
         },
         {
           "rowId": "REQ-TW2-001",
@@ -815,6 +504,69 @@
           "rowId": "REQ-TW2-001",
           "requirementId": "REQ-TW2-001",
           "columnId": "gnc",
+          "covered": false
+        },
+        {
+          "rowId": "REQ-TW2-001",
+          "requirementId": "REQ-TW2-001",
+          "columnId": "activity-sample-return",
+          "covered": true,
+          "evidence": "REQ-TW2-001 satisfy activity-sample-return"
+        },
+        {
+          "rowId": "REQ-TW2-001",
+          "requirementId": "REQ-TW2-001",
+          "columnId": "activity-cruise-safety",
+          "covered": false
+        },
+        {
+          "rowId": "REQ-TW2-001",
+          "requirementId": "REQ-TW2-001",
+          "columnId": "activity-telemetry-downlink",
+          "covered": false
+        },
+        {
+          "rowId": "REQ-TW2-001",
+          "requirementId": "REQ-TW2-001",
+          "columnId": "activity-trace-coverage-check",
+          "covered": false
+        },
+        {
+          "rowId": "REQ-TW2-001",
+          "requirementId": "REQ-TW2-001",
+          "columnId": "connection-sample-transfer-to-platform",
+          "covered": true,
+          "evidence": "REQ-TW2-001 satisfy connection-sample-transfer-to-platform"
+        },
+        {
+          "rowId": "REQ-TW2-001",
+          "requirementId": "REQ-TW2-001",
+          "columnId": "connection-sample-telemetry-to-ttc",
+          "covered": false
+        },
+        {
+          "rowId": "REQ-TW2-001",
+          "requirementId": "REQ-TW2-001",
+          "columnId": "connection-power-thermal-to-sampling",
+          "covered": false
+        },
+        {
+          "rowId": "REQ-TW2-001",
+          "requirementId": "REQ-TW2-001",
+          "columnId": "connection-gnc-data-to-ttc",
+          "covered": false
+        },
+        {
+          "rowId": "REQ-TW2-001",
+          "requirementId": "REQ-TW2-001",
+          "columnId": "constraint-mass-budget",
+          "covered": true,
+          "evidence": "REQ-TW2-001 satisfy constraint-mass-budget"
+        },
+        {
+          "rowId": "REQ-TW2-001",
+          "requirementId": "REQ-TW2-001",
+          "columnId": "constraint-power-budget",
           "covered": false
         },
         {
@@ -822,7 +574,7 @@
           "requirementId": "REQ-TW2-002",
           "columnId": "spacecraft-platform",
           "covered": true,
-          "evidence": "REQ-TW2-002 satisfy 航天器平台"
+          "evidence": "REQ-TW2-002 satisfy spacecraft-platform"
         },
         {
           "rowId": "REQ-TW2-002",
@@ -841,14 +593,78 @@
           "requirementId": "REQ-TW2-002",
           "columnId": "power-thermal",
           "covered": true,
-          "evidence": "REQ-TW2-002 satisfy 电源与热控分系统"
+          "evidence": "REQ-TW2-002 satisfy power-thermal"
         },
         {
           "rowId": "REQ-TW2-002",
           "requirementId": "REQ-TW2-002",
           "columnId": "gnc",
           "covered": true,
-          "evidence": "REQ-TW2-002 satisfy 制导导航与控制分系统"
+          "evidence": "REQ-TW2-002 satisfy gnc"
+        },
+        {
+          "rowId": "REQ-TW2-002",
+          "requirementId": "REQ-TW2-002",
+          "columnId": "activity-sample-return",
+          "covered": false
+        },
+        {
+          "rowId": "REQ-TW2-002",
+          "requirementId": "REQ-TW2-002",
+          "columnId": "activity-cruise-safety",
+          "covered": true,
+          "evidence": "REQ-TW2-002 satisfy activity-cruise-safety"
+        },
+        {
+          "rowId": "REQ-TW2-002",
+          "requirementId": "REQ-TW2-002",
+          "columnId": "activity-telemetry-downlink",
+          "covered": false
+        },
+        {
+          "rowId": "REQ-TW2-002",
+          "requirementId": "REQ-TW2-002",
+          "columnId": "activity-trace-coverage-check",
+          "covered": false
+        },
+        {
+          "rowId": "REQ-TW2-002",
+          "requirementId": "REQ-TW2-002",
+          "columnId": "connection-sample-transfer-to-platform",
+          "covered": false
+        },
+        {
+          "rowId": "REQ-TW2-002",
+          "requirementId": "REQ-TW2-002",
+          "columnId": "connection-sample-telemetry-to-ttc",
+          "covered": false
+        },
+        {
+          "rowId": "REQ-TW2-002",
+          "requirementId": "REQ-TW2-002",
+          "columnId": "connection-power-thermal-to-sampling",
+          "covered": true,
+          "evidence": "REQ-TW2-002 satisfy connection-power-thermal-to-sampling"
+        },
+        {
+          "rowId": "REQ-TW2-002",
+          "requirementId": "REQ-TW2-002",
+          "columnId": "connection-gnc-data-to-ttc",
+          "covered": true,
+          "evidence": "REQ-TW2-002 satisfy connection-gnc-data-to-ttc"
+        },
+        {
+          "rowId": "REQ-TW2-002",
+          "requirementId": "REQ-TW2-002",
+          "columnId": "constraint-mass-budget",
+          "covered": false
+        },
+        {
+          "rowId": "REQ-TW2-002",
+          "requirementId": "REQ-TW2-002",
+          "columnId": "constraint-power-budget",
+          "covered": true,
+          "evidence": "REQ-TW2-002 satisfy constraint-power-budget"
         },
         {
           "rowId": "REQ-TW2-003",
@@ -867,7 +683,7 @@
           "requirementId": "REQ-TW2-003",
           "columnId": "ttc-communication",
           "covered": true,
-          "evidence": "REQ-TW2-003 satisfy 测控通信分系统"
+          "evidence": "REQ-TW2-003 satisfy ttc-communication"
         },
         {
           "rowId": "REQ-TW2-003",
@@ -882,11 +698,74 @@
           "covered": false
         },
         {
+          "rowId": "REQ-TW2-003",
+          "requirementId": "REQ-TW2-003",
+          "columnId": "activity-sample-return",
+          "covered": false
+        },
+        {
+          "rowId": "REQ-TW2-003",
+          "requirementId": "REQ-TW2-003",
+          "columnId": "activity-cruise-safety",
+          "covered": false
+        },
+        {
+          "rowId": "REQ-TW2-003",
+          "requirementId": "REQ-TW2-003",
+          "columnId": "activity-telemetry-downlink",
+          "covered": true,
+          "evidence": "REQ-TW2-003 satisfy activity-telemetry-downlink"
+        },
+        {
+          "rowId": "REQ-TW2-003",
+          "requirementId": "REQ-TW2-003",
+          "columnId": "activity-trace-coverage-check",
+          "covered": false
+        },
+        {
+          "rowId": "REQ-TW2-003",
+          "requirementId": "REQ-TW2-003",
+          "columnId": "connection-sample-transfer-to-platform",
+          "covered": false
+        },
+        {
+          "rowId": "REQ-TW2-003",
+          "requirementId": "REQ-TW2-003",
+          "columnId": "connection-sample-telemetry-to-ttc",
+          "covered": true,
+          "evidence": "REQ-TW2-003 satisfy connection-sample-telemetry-to-ttc"
+        },
+        {
+          "rowId": "REQ-TW2-003",
+          "requirementId": "REQ-TW2-003",
+          "columnId": "connection-power-thermal-to-sampling",
+          "covered": false
+        },
+        {
+          "rowId": "REQ-TW2-003",
+          "requirementId": "REQ-TW2-003",
+          "columnId": "connection-gnc-data-to-ttc",
+          "covered": true,
+          "evidence": "REQ-TW2-003 satisfy connection-gnc-data-to-ttc"
+        },
+        {
+          "rowId": "REQ-TW2-003",
+          "requirementId": "REQ-TW2-003",
+          "columnId": "constraint-mass-budget",
+          "covered": false
+        },
+        {
+          "rowId": "REQ-TW2-003",
+          "requirementId": "REQ-TW2-003",
+          "columnId": "constraint-power-budget",
+          "covered": false
+        },
+        {
           "rowId": "REQ-TW2-004",
           "requirementId": "REQ-TW2-004",
           "columnId": "spacecraft-platform",
           "covered": true,
-          "evidence": "REQ-TW2-004 satisfy 航天器平台"
+          "evidence": "REQ-TW2-004 satisfy spacecraft-platform"
         },
         {
           "rowId": "REQ-TW2-004",
@@ -899,7 +778,7 @@
           "requirementId": "REQ-TW2-004",
           "columnId": "ttc-communication",
           "covered": true,
-          "evidence": "REQ-TW2-004 satisfy 测控通信分系统"
+          "evidence": "REQ-TW2-004 satisfy ttc-communication"
         },
         {
           "rowId": "REQ-TW2-004",
@@ -914,81 +793,6 @@
           "covered": false
         },
         {
-          "rowId": "REQ-TW2-001",
-          "requirementId": "REQ-TW2-001",
-          "columnId": "activity-sample-return",
-          "covered": true,
-          "evidence": "近地小行星取样返回 覆盖 REQ-TW2-001，执行结构：采样返回分系统、制导导航与控制分系统"
-        },
-        {
-          "rowId": "REQ-TW2-001",
-          "requirementId": "REQ-TW2-001",
-          "columnId": "activity-cruise-safety",
-          "covered": false
-        },
-        {
-          "rowId": "REQ-TW2-001",
-          "requirementId": "REQ-TW2-001",
-          "columnId": "activity-telemetry-downlink",
-          "covered": false
-        },
-        {
-          "rowId": "REQ-TW2-001",
-          "requirementId": "REQ-TW2-001",
-          "columnId": "activity-trace-coverage-check",
-          "covered": false
-        },
-        {
-          "rowId": "REQ-TW2-002",
-          "requirementId": "REQ-TW2-002",
-          "columnId": "activity-sample-return",
-          "covered": false
-        },
-        {
-          "rowId": "REQ-TW2-002",
-          "requirementId": "REQ-TW2-002",
-          "columnId": "activity-cruise-safety",
-          "covered": true,
-          "evidence": "深空巡航安全维持 覆盖 REQ-TW2-002，执行结构：航天器平台、电源与热控分系统、制导导航与控制分系统"
-        },
-        {
-          "rowId": "REQ-TW2-002",
-          "requirementId": "REQ-TW2-002",
-          "columnId": "activity-telemetry-downlink",
-          "covered": false
-        },
-        {
-          "rowId": "REQ-TW2-002",
-          "requirementId": "REQ-TW2-002",
-          "columnId": "activity-trace-coverage-check",
-          "covered": false
-        },
-        {
-          "rowId": "REQ-TW2-003",
-          "requirementId": "REQ-TW2-003",
-          "columnId": "activity-sample-return",
-          "covered": false
-        },
-        {
-          "rowId": "REQ-TW2-003",
-          "requirementId": "REQ-TW2-003",
-          "columnId": "activity-cruise-safety",
-          "covered": false
-        },
-        {
-          "rowId": "REQ-TW2-003",
-          "requirementId": "REQ-TW2-003",
-          "columnId": "activity-telemetry-downlink",
-          "covered": true,
-          "evidence": "遥测与科学数据下传 覆盖 REQ-TW2-003，执行结构：测控通信分系统"
-        },
-        {
-          "rowId": "REQ-TW2-003",
-          "requirementId": "REQ-TW2-003",
-          "columnId": "activity-trace-coverage-check",
-          "covered": false
-        },
-        {
           "rowId": "REQ-TW2-004",
           "requirementId": "REQ-TW2-004",
           "columnId": "activity-sample-return",
@@ -1011,7 +815,373 @@
           "requirementId": "REQ-TW2-004",
           "columnId": "activity-trace-coverage-check",
           "covered": true,
-          "evidence": "模型工件追溯覆盖校验 覆盖 REQ-TW2-004，执行结构：航天器平台、测控通信分系统"
+          "evidence": "REQ-TW2-004 satisfy activity-trace-coverage-check"
+        },
+        {
+          "rowId": "REQ-TW2-004",
+          "requirementId": "REQ-TW2-004",
+          "columnId": "connection-sample-transfer-to-platform",
+          "covered": false
+        },
+        {
+          "rowId": "REQ-TW2-004",
+          "requirementId": "REQ-TW2-004",
+          "columnId": "connection-sample-telemetry-to-ttc",
+          "covered": false
+        },
+        {
+          "rowId": "REQ-TW2-004",
+          "requirementId": "REQ-TW2-004",
+          "columnId": "connection-power-thermal-to-sampling",
+          "covered": false
+        },
+        {
+          "rowId": "REQ-TW2-004",
+          "requirementId": "REQ-TW2-004",
+          "columnId": "connection-gnc-data-to-ttc",
+          "covered": false
+        },
+        {
+          "rowId": "REQ-TW2-004",
+          "requirementId": "REQ-TW2-004",
+          "columnId": "constraint-mass-budget",
+          "covered": false
+        },
+        {
+          "rowId": "REQ-TW2-004",
+          "requirementId": "REQ-TW2-004",
+          "columnId": "constraint-power-budget",
+          "covered": false
+        }
+      ]
+    },
+    {
+      "id": "ibd-internal-block-view",
+      "title": "IBD 内部块图",
+      "kind": "ibd",
+      "layout": "auto",
+      "layoutEngine": "elk-layered",
+      "nodes": [
+        {
+          "id": "spacecraft-platform",
+          "kind": "ibd-part",
+          "label": "航天器平台",
+          "elementId": "spacecraft-platform",
+          "position": {
+            "x": 80,
+            "y": 160
+          }
+        },
+        {
+          "id": "sampling-return",
+          "kind": "ibd-part",
+          "label": "采样返回分系统",
+          "elementId": "sampling-return",
+          "position": {
+            "x": 300,
+            "y": 160
+          }
+        },
+        {
+          "id": "ttc-communication",
+          "kind": "ibd-part",
+          "label": "测控通信分系统",
+          "elementId": "ttc-communication",
+          "position": {
+            "x": 520,
+            "y": 160
+          }
+        },
+        {
+          "id": "power-thermal",
+          "kind": "ibd-part",
+          "label": "电源与热控分系统",
+          "elementId": "power-thermal",
+          "position": {
+            "x": 740,
+            "y": 160
+          }
+        },
+        {
+          "id": "gnc",
+          "kind": "ibd-part",
+          "label": "制导导航与控制分系统",
+          "elementId": "gnc",
+          "position": {
+            "x": 960,
+            "y": 160
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "connection-sample-transfer-to-platform",
+          "kind": "connection",
+          "source": "sampling-return",
+          "target": "spacecraft-platform",
+          "sourcePort": "sample-transfer-out",
+          "targetPort": "sample-return-mechanical-interface",
+          "label": "样品转移接口"
+        },
+        {
+          "id": "connection-sample-telemetry-to-ttc",
+          "kind": "connection",
+          "source": "sampling-return",
+          "target": "ttc-communication",
+          "sourcePort": "sample-telemetry-out",
+          "targetPort": "data-bus-in",
+          "label": "采样遥测数据接口"
+        },
+        {
+          "id": "connection-power-thermal-to-sampling",
+          "kind": "connection",
+          "source": "power-thermal",
+          "target": "sampling-return",
+          "sourcePort": "power-thermal-service",
+          "targetPort": "sample-power-thermal-in",
+          "label": "供电与热控接口"
+        },
+        {
+          "id": "connection-gnc-data-to-ttc",
+          "kind": "connection",
+          "source": "gnc",
+          "target": "ttc-communication",
+          "sourcePort": "attitude-control-data",
+          "targetPort": "telemetry-downlink",
+          "label": "姿态遥测数据接口"
+        }
+      ],
+      "ports": [
+        {
+          "id": "attitude-control-data",
+          "label": "姿态控制数据接口",
+          "kind": "control",
+          "ownerId": "gnc",
+          "interfaceId": "telemetry-data"
+        },
+        {
+          "id": "power-thermal-service",
+          "label": "供电与热控服务接口",
+          "kind": "power",
+          "ownerId": "power-thermal",
+          "interfaceId": "power-thermal"
+        },
+        {
+          "id": "sample-power-thermal-in",
+          "label": "采样供电与热控接口",
+          "kind": "power",
+          "ownerId": "sampling-return",
+          "interfaceId": "power-thermal"
+        },
+        {
+          "id": "sample-telemetry-out",
+          "label": "采样遥测数据接口",
+          "kind": "data",
+          "ownerId": "sampling-return",
+          "interfaceId": "telemetry-data"
+        },
+        {
+          "id": "sample-transfer-out",
+          "label": "样品转移与封装接口",
+          "kind": "sample",
+          "ownerId": "sampling-return",
+          "interfaceId": "sample-transfer"
+        },
+        {
+          "id": "sample-return-mechanical-interface",
+          "label": "样品转移接口",
+          "kind": "sample",
+          "ownerId": "spacecraft-platform",
+          "interfaceId": "sample-transfer"
+        },
+        {
+          "id": "data-bus-in",
+          "label": "遥测数据接收接口",
+          "kind": "data",
+          "ownerId": "ttc-communication",
+          "interfaceId": "telemetry-data"
+        },
+        {
+          "id": "telemetry-downlink",
+          "label": "测控通信下传接口",
+          "kind": "control",
+          "ownerId": "ttc-communication",
+          "interfaceId": "telemetry-data"
+        }
+      ],
+      "connections": [
+        {
+          "id": "connection-sample-transfer-to-platform",
+          "kind": "connection",
+          "source": "sampling-return",
+          "target": "spacecraft-platform",
+          "sourcePort": "sample-transfer-out",
+          "targetPort": "sample-return-mechanical-interface",
+          "label": "样品转移接口"
+        },
+        {
+          "id": "connection-sample-telemetry-to-ttc",
+          "kind": "connection",
+          "source": "sampling-return",
+          "target": "ttc-communication",
+          "sourcePort": "sample-telemetry-out",
+          "targetPort": "data-bus-in",
+          "label": "采样遥测数据接口"
+        },
+        {
+          "id": "connection-power-thermal-to-sampling",
+          "kind": "connection",
+          "source": "power-thermal",
+          "target": "sampling-return",
+          "sourcePort": "power-thermal-service",
+          "targetPort": "sample-power-thermal-in",
+          "label": "供电与热控接口"
+        },
+        {
+          "id": "connection-gnc-data-to-ttc",
+          "kind": "connection",
+          "source": "gnc",
+          "target": "ttc-communication",
+          "sourcePort": "attitude-control-data",
+          "targetPort": "telemetry-downlink",
+          "label": "姿态遥测数据接口"
+        }
+      ]
+    },
+    {
+      "id": "parameter-constraints-view",
+      "title": "参数约束视图",
+      "kind": "parameter-constraints",
+      "layout": "auto",
+      "layoutEngine": "deterministic-layered-layout",
+      "nodes": [
+        {
+          "id": "constraint-mass-budget",
+          "kind": "constraint",
+          "label": "质量预算约束",
+          "text": "spacecraft-dry-mass <= 1000 kg",
+          "elementId": "constraint-mass-budget",
+          "position": {
+            "x": 80,
+            "y": 80
+          }
+        },
+        {
+          "id": "constraint-power-budget",
+          "kind": "constraint",
+          "label": "电源输出约束",
+          "text": "solar-array-output >= 2000 W",
+          "elementId": "constraint-power-budget",
+          "position": {
+            "x": 80,
+            "y": 240
+          }
+        },
+        {
+          "id": "solar-array-output",
+          "kind": "parameter",
+          "label": "太阳翼输出功率",
+          "text": "单位：W",
+          "elementId": "solar-array-output",
+          "position": {
+            "x": 420,
+            "y": 80
+          }
+        },
+        {
+          "id": "spacecraft-dry-mass",
+          "kind": "parameter",
+          "label": "探测器干质量",
+          "text": "单位：kg",
+          "elementId": "spacecraft-dry-mass",
+          "position": {
+            "x": 420,
+            "y": 240
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "binding-mass-budget-dry-mass",
+          "kind": "binding",
+          "source": "constraint-mass-budget",
+          "target": "spacecraft-dry-mass",
+          "label": "质量参数绑定"
+        },
+        {
+          "id": "binding-power-budget-solar-array-output",
+          "kind": "binding",
+          "source": "constraint-power-budget",
+          "target": "solar-array-output",
+          "label": "功率参数绑定"
+        }
+      ],
+      "constraints": [
+        {
+          "id": "constraint-mass-budget",
+          "label": "质量预算约束",
+          "expression": "mass <= 1000",
+          "relatedElementIds": [
+            "spacecraft-platform",
+            "sampling-return"
+          ],
+          "requirementIds": []
+        },
+        {
+          "id": "constraint-power-budget",
+          "label": "电源输出约束",
+          "expression": "power >= 2000",
+          "relatedElementIds": [
+            "power-thermal",
+            "spacecraft-platform"
+          ],
+          "requirementIds": []
+        }
+      ],
+      "parameters": [
+        {
+          "id": "solar-array-output",
+          "label": "太阳翼输出功率",
+          "unit": "W",
+          "unitSymbol": "W",
+          "relatedElementIds": [
+            "power-thermal",
+            "spacecraft-platform"
+          ]
+        },
+        {
+          "id": "spacecraft-dry-mass",
+          "label": "探测器干质量",
+          "unit": "kg",
+          "unitSymbol": "kg",
+          "relatedElementIds": [
+            "spacecraft-platform",
+            "sampling-return"
+          ]
+        }
+      ],
+      "bindings": [
+        {
+          "id": "binding-mass-budget-dry-mass",
+          "kind": "binding",
+          "constraintId": "constraint-mass-budget",
+          "parameterId": "spacecraft-dry-mass",
+          "label": "质量参数绑定",
+          "relatedElementIds": [
+            "spacecraft-platform",
+            "sampling-return"
+          ]
+        },
+        {
+          "id": "binding-power-budget-solar-array-output",
+          "kind": "binding",
+          "constraintId": "constraint-power-budget",
+          "parameterId": "solar-array-output",
+          "label": "功率参数绑定",
+          "relatedElementIds": [
+            "power-thermal",
+            "spacecraft-platform"
+          ]
         }
       ]
     }
@@ -1020,14 +1190,12 @@
     "status": "passed",
     "checkedRules": [
       "schema",
-      "missing-reference",
-      "coverage",
-      "port-reference",
-      "connection-endpoint",
-      "interface-compatibility",
-      "parameter-completeness",
-      "unit-completeness",
-      "binding-completeness"
+      "semantic-source-set",
+      "strict-sysml2",
+      "reference-integrity",
+      "traceability",
+      "ibd-endpoints",
+      "parameter-bindings"
     ]
   }
 }

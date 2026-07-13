@@ -7,6 +7,8 @@ build/
 target/
 src-tauri/target/
 src-tauri/gen/
+src-tauri/bin/
+src-tauri/resources/mbse-sidecar/
 
 # Environment and local scratch
 .env

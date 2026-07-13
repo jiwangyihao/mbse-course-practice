@@ -88,9 +88,24 @@ type PersistedView = {
 export function buildProjectExportBundle(savedProject: SavedWorkbenchProjectState): ProjectExportBundle {
   const projectId = readString(savedProject.manifest.id, 'unknown-project');
   const projectName = readString(savedProject.manifest.name, projectId);
-  const sysmlArtifact = savedProject.modelArtifacts.find((artifact) => artifact.kind === 'sysml-v2');
+  const sysmlArtifacts = savedProject.modelArtifacts.filter((artifact) => artifact.kind === 'sysml-v2');
   const viewModelArtifact = savedProject.modelArtifacts.find((artifact) => artifact.kind === 'json-view-model');
-  const sysmlFile = sysmlArtifact ? findPersistedFile(savedProject, sysmlArtifact.path) : undefined;
+  const sysmlExportArtifacts: ProjectExportArtifact[] = sysmlArtifacts.map((artifact, index) => {
+    const sysmlFile = findPersistedFile(savedProject, artifact.path);
+    const relativeModelPath = artifact.path.replace(/^sample-projects\/[^/]+\/model\//, '');
+    return {
+      id: artifact.id || `${projectId}-sysml-${index}`,
+      type: 'sysml-v2',
+      title: artifact.title || `SysML v2 源文件 ${relativeModelPath}`,
+      path: `model/${relativeModelPath}`,
+      source: artifact.path,
+      required: true,
+      status: sysmlFile ? 'ready' : 'missing',
+      mediaType: 'text/x-sysml',
+      content: sysmlFile?.content ?? '',
+      detail: sysmlFile ? undefined : `已保存项目中缺少 SysML v2 源文件：${relativeModelPath}。`,
+    };
+  });
   const viewModelFile = viewModelArtifact ? findPersistedFile(savedProject, viewModelArtifact.path) : undefined;
   const savedValidationFile = findPersistedFile(savedProject, validationArtifactPath(projectId));
   const parsedViewModel = parseJsonObject(viewModelFile?.content);
@@ -138,18 +153,7 @@ export function buildProjectExportBundle(savedProject: SavedWorkbenchProjectStat
         2,
       ),
     },
-    {
-      id: sysmlArtifact?.id ?? `missing-${projectId}-sysml-v2`,
-      type: 'sysml-v2',
-      title: sysmlArtifact?.title ?? 'SysML v2 模型文本',
-      path: `model/${projectId}.sysml`,
-      source: sysmlArtifact?.path ?? savedProject.manifestPath,
-      required: true,
-      status: sysmlFile ? 'ready' : 'missing',
-      mediaType: 'text/x-sysml',
-      content: sysmlFile?.content ?? '',
-      detail: sysmlFile ? undefined : '已保存项目中缺少 SysML v2 模型文本。',
-    },
+    ...sysmlExportArtifacts,
     {
       id: viewModelArtifact?.id ?? `missing-${projectId}-json-view-model`,
       type: 'json-view-model',
@@ -362,11 +366,13 @@ function buildChecklistItem(
 ): ProjectExportChecklistItem {
   const matchedArtifacts = artifacts.filter((artifact) => types.includes(artifact.type));
   const statuses = matchedArtifacts.map((artifact) => artifact.status);
-  const status = statuses.every((current) => current === 'included')
-    ? 'included'
-    : statuses.some((current) => current === 'missing')
-      ? 'missing'
-      : 'ready';
+  const status = matchedArtifacts.length === 0
+    ? 'missing'
+    : statuses.every((current) => current === 'included')
+      ? 'included'
+      : statuses.some((current) => current === 'missing')
+        ? 'missing'
+        : 'ready';
 
   return {
     id,

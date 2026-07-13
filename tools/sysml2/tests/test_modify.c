@@ -337,6 +337,96 @@ TEST(delete_removes_relationships) {
     FIXTURE_TEARDOWN();
 }
 
+TEST(delete_removes_body_statements_referencing_deleted_elements) {
+    FIXTURE_SETUP();
+
+    SysmlStatement bind_stmt = {
+        .kind = SYSML_STMT_BIND,
+        .source = { .target = "massConstraint.totalMass" },
+        .target = { .target = "mass" },
+    };
+    SysmlStatement *vehicle_body[1] = { &bind_stmt };
+    SysmlNode nodes[4] = {
+        {.id = "Pkg", .name = "Pkg", .kind = SYSML_KIND_PACKAGE, .parent_id = NULL},
+        {.id = "Pkg::vehicle", .name = "vehicle", .kind = SYSML_KIND_PART_USAGE, .parent_id = "Pkg", .body_stmts = vehicle_body, .body_stmt_count = 1},
+        {.id = "Pkg::vehicle::mass", .name = "mass", .kind = SYSML_KIND_ATTRIBUTE_USAGE, .parent_id = "Pkg::vehicle"},
+        {.id = "Pkg::vehicle::massConstraint", .name = "massConstraint", .kind = SYSML_KIND_CONSTRAINT_USAGE, .parent_id = "Pkg::vehicle"},
+    };
+    SysmlSemanticModel *model = create_test_model(&arena, &intern, nodes, 4, NULL, 0);
+
+    Sysml2QueryPattern *pattern = sysml2_query_parse("Pkg::vehicle::mass", &arena);
+    size_t deleted_count = 0;
+    SysmlSemanticModel *result = sysml2_modify_clone_with_deletions(
+        model, pattern, &arena, &intern, &deleted_count
+    );
+
+    ASSERT_NOT_NULL(result);
+    for (size_t i = 0; i < result->element_count; i++) {
+        if (strcmp(result->elements[i]->id, "Pkg::vehicle") == 0) {
+            ASSERT_EQ(result->elements[i]->body_stmt_count, 0);
+        }
+    }
+
+    FIXTURE_TEARDOWN();
+}
+
+TEST(delete_removes_surviving_node_reference_arrays) {
+    FIXTURE_SETUP();
+
+    const char *typed_by_values[1] = { "Target" };
+    bool typed_by_conjugated[1] = { false };
+    const char *specializes_values[1] = { "Target" };
+    const char *redefines_values[1] = { "Target" };
+    const char *references_values[1] = { "Target" };
+    SysmlNode nodes[6] = {
+        {.id = "Pkg", .name = "Pkg", .kind = SYSML_KIND_PACKAGE, .parent_id = NULL},
+        {.id = "Pkg::Target", .name = "Target", .kind = SYSML_KIND_PART_DEF, .parent_id = "Pkg"},
+        {.id = "Pkg::typedUser", .name = "typedUser", .kind = SYSML_KIND_PART_USAGE, .parent_id = "Pkg", .typed_by = typed_by_values, .typed_by_count = 1, .typed_by_conjugated = typed_by_conjugated},
+        {.id = "Pkg::specialized", .name = "specialized", .kind = SYSML_KIND_PART_DEF, .parent_id = "Pkg", .specializes = specializes_values, .specializes_count = 1},
+        {.id = "Pkg::redefiner", .name = "redefiner", .kind = SYSML_KIND_PART_DEF, .parent_id = "Pkg", .redefines = redefines_values, .redefines_count = 1},
+        {.id = "Pkg::referenceHolder", .name = "referenceHolder", .kind = SYSML_KIND_PART_DEF, .parent_id = "Pkg", .references = references_values, .references_count = 1},
+    };
+    SysmlSemanticModel *model = create_test_model(&arena, &intern, nodes, 6, NULL, 0);
+
+    Sysml2QueryPattern *pattern = sysml2_query_parse("Pkg::Target", &arena);
+    size_t deleted_count = 0;
+    SysmlSemanticModel *result = sysml2_modify_clone_with_deletions(
+        model, pattern, &arena, &intern, &deleted_count
+    );
+
+    ASSERT_NOT_NULL(result);
+    ASSERT_EQ(result->element_count, 5);  /* Pkg + 4 surviving nodes */
+
+    bool found_typed = false;
+    bool found_specialized = false;
+    bool found_redefiner = false;
+    bool found_reference_holder = false;
+    for (size_t i = 0; i < result->element_count; i++) {
+        if (strcmp(result->elements[i]->id, "Pkg::typedUser") == 0) {
+            ASSERT_EQ(result->elements[i]->typed_by_count, 0);
+            found_typed = true;
+        }
+        if (strcmp(result->elements[i]->id, "Pkg::specialized") == 0) {
+            ASSERT_EQ(result->elements[i]->specializes_count, 0);
+            found_specialized = true;
+        }
+        if (strcmp(result->elements[i]->id, "Pkg::redefiner") == 0) {
+            ASSERT_EQ(result->elements[i]->redefines_count, 0);
+            found_redefiner = true;
+        }
+        if (strcmp(result->elements[i]->id, "Pkg::referenceHolder") == 0) {
+            ASSERT_EQ(result->elements[i]->references_count, 0);
+            found_reference_holder = true;
+        }
+    }
+    ASSERT_TRUE(found_typed);
+    ASSERT_TRUE(found_specialized);
+    ASSERT_TRUE(found_redefiner);
+    ASSERT_TRUE(found_reference_holder);
+
+    FIXTURE_TEARDOWN();
+}
+
 TEST(delete_nonexistent_returns_copy) {
     FIXTURE_SETUP();
 
@@ -680,6 +770,11 @@ TEST(delete_relationship_when_source_deleted) {
     ASSERT_NOT_NULL(result);
     ASSERT_EQ(result->relationship_count, 0);  /* Relationship removed */
     ASSERT_EQ(result->element_count, 2);  /* Pkg and B remain */
+    for (size_t i = 0; i < result->element_count; i++) {
+        if (strcmp(result->elements[i]->id, "Pkg::A") == 0) {
+            ASSERT_EQ(result->elements[i]->specializes_count, 0);
+        }
+    }
 
     FIXTURE_TEARDOWN();
 }
@@ -3413,6 +3508,8 @@ int main(void) {
     RUN_TEST(delete_direct_children_only);
     RUN_TEST(delete_recursive);
     RUN_TEST(delete_removes_relationships);
+    RUN_TEST(delete_removes_body_statements_referencing_deleted_elements);
+    RUN_TEST(delete_removes_surviving_node_reference_arrays);
     RUN_TEST(delete_nonexistent_returns_copy);
 
     /* Additional delete tests */

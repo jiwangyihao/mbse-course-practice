@@ -1,21 +1,24 @@
 # MBSE 工作区 SysML v2 建模规范
 
-本文件是 MBSE 建模工作台的本地编写规范。最终模型必须保存到 `output/model.sysml`，最终 JSON 视图模型必须保存到 `output/view-model.json`。不要把最终工件塞进 `yield` 参数。
+本文件是 MBSE 建模工作台的本地编写规范。最终模型必须保存到固定多文件 SysML source set：`output/model.sysml`、`output/requirements.sysml`、`output/structure.sysml`、`output/behavior.sysml`、`output/constraints.sysml`。不要创建 `output/view-model.json`，也不要把最终工件塞进 `yield` 参数。
 
 ## 事实来源
 
 - `input/confirmed-data.json` 是唯一业务事实来源。
 - `input/source-material.md` 仅用于追溯原始语境，不得覆盖或补造 `confirmed-data.json` 中没有的事实。
-- `references/example-model.sysml` 和 `references/example-view-model.json` 只演示结构，禁止复制其中的项目标识、需求或分系统作为当前项目事实。
+- `references/example-source-set/` 与 `references/example-derived-view-model.json` 只演示结构；最终输出只能写固定 SysML source set，JSON 视图模型由 `verify` / `yield` 从 strict 语义自动派生。
 
 ## 输出路径
 
 ```text
 output/model.sysml
-output/view-model.json
+output/requirements.sysml
+output/structure.sysml
+output/behavior.sysml
+output/constraints.sysml
 ```
 
-只维护这两个最终工件。需要临时文件时放到 `scratch/`，完成前自行删除。
+只维护这组最终 SysML 源文件。需要临时文件时放到 `scratch/`，完成前自行删除。
 
 ## SysML v2 文件约束
 
@@ -73,8 +76,8 @@ connection telemetryConnection connect source.telemetryOut to target.telemetryIn
 
 ## 推荐工作循环
 
-1. 阅读 `input/confirmed-data.json`、本规范、视图模型契约和两个示例。
-2. 创建或更新两个固定输出文件。
+1. 阅读 `input/confirmed-data.json`、本规范、视图模型契约和 source set 示例。
+2. 创建或更新固定 SysML source set。
 3. 调用 `verify`。
 4. 按 `verify` 的路径化错误逐项修正，重复 2–3。
 5. `verify` 通过后调用 `yield`，只提交执行记录报告。

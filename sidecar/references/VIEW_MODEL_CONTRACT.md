@@ -1,21 +1,21 @@
 # JSON 视图模型契约
 
-最终文件：`output/view-model.json`。
+最终 JSON 视图模型不是 Agent 直接写入的文件，而是 `verify` / `yield` 基于固定 SysML source set 的 strict `sysml2` 语义自动派生结果。若 Agent 写入 `output/view-model.json`，工作区校验会直接失败。
 
 ## 根对象
 
-必须包含：
+派生结果必须包含：
 
 ```json
 {
   "schemaVersion": "0.4.0",
   "projectId": "<confirmed-data.projectId>",
   "generatedFrom": "<confirmed-data.packageName>",
-  "source": "sdk-agent-generated",
+  "source": "sysml-source-set-derived",
   "views": [],
   "validation": {
     "status": "passed",
-    "checkedRules": ["schema"]
+    "checkedRules": ["schema", "semantic-source-set", "strict-sysml2"]
   }
 }
 ```

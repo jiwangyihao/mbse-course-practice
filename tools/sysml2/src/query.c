@@ -365,6 +365,19 @@ const char *sysml2_query_parent_path(const char *element_id, Sysml2Arena *arena)
     return parent;
 }
 
+static bool sysml2_query_ancestors_contains(
+    const char **ancestors_list,
+    size_t ancestors_count,
+    const char *id
+) {
+    for (size_t i = 0; i < ancestors_count; i++) {
+        if (strcmp(ancestors_list[i], id) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /*
  * Get ancestors needed for valid SysML output (parent stubs)
  */
@@ -392,15 +405,6 @@ void sysml2_query_get_ancestors(
         return;
     }
 
-    /* Helper to check if ID is in ancestors array */
-    #define IN_ANCESTORS(id) ({ \
-        bool found = false; \
-        for (size_t i = 0; i < count; i++) { \
-            if (strcmp(ancestors[i], id) == 0) { found = true; break; } \
-        } \
-        found; \
-    })
-
     /* For each element in result, trace up to root */
     for (size_t i = 0; i < result->element_count; i++) {
         const char *elem_id = result->elements[i]->id;
@@ -409,7 +413,8 @@ void sysml2_query_get_ancestors(
         const char *parent_id = sysml2_query_parent_path(elem_id, arena);
         while (parent_id) {
             /* Skip if this ancestor is already in result or ancestors list */
-            if (!sysml2_query_result_contains(result, parent_id) && !IN_ANCESTORS(parent_id)) {
+            if (!sysml2_query_result_contains(result, parent_id) &&
+                !sysml2_query_ancestors_contains(ancestors, count, parent_id)) {
                 /* Grow capacity if needed */
                 if (count >= capacity) {
                     size_t new_cap = capacity * 2;
@@ -425,8 +430,6 @@ void sysml2_query_get_ancestors(
             parent_id = sysml2_query_parent_path(parent_id, arena);
         }
     }
-
-    #undef IN_ANCESTORS
 
     *out_ancestors = ancestors;
     *out_count = count;

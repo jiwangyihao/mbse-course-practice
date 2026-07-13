@@ -93,17 +93,6 @@ function normalizeDiagnostic(diagnostic) {
     endColumn: typeof end?.character === 'number' ? end.character + 1 : undefined,
   };
 }
-function isAcceptableLspFallbackDiagnostic(diagnostic) {
-  if (!diagnostic || typeof diagnostic !== 'object') {
-    return false;
-  }
-  if (typeof diagnostic.severity === 'number' && diagnostic.severity > 2) {
-    return true;
-  }
-  return diagnostic.severity === 2
-    && diagnostic.source === 'sysml'
-    && /^Definition '.+' is not referenced by any usage in the workspace$/.test(String(diagnostic.message ?? ''));
-}
 
 export async function validateSysmlWithLsp({ workspaceRoot, filePath, text, timeoutMs = 30_000 }) {
   const child = spawn(process.execPath, [sysmlLsp.serverPath, '--stdio'], {
@@ -228,47 +217,22 @@ export async function validateSysml({ workspaceRoot, filePath, text, timeoutMs =
   try {
     return await validateSysmlWithSysml2({ workspaceRoot, filePath, text, timeoutMs });
   } catch (error) {
-    if (!(error instanceof Sysml2BackendUnavailableError)) {
-      return {
-        valid: false,
-        diagnostics: [
-          {
-            severity: 1,
-            message: `SysML parser/compiler 不可用或执行失败：${error instanceof Error ? error.message : String(error)}`,
-            source: 'sysml2',
-            line: 1,
-            column: 1,
-          },
-        ],
-        backend: 'sysml2',
-      };
-    }
+    return {
+      valid: false,
+      diagnostics: [
+        {
+          severity: 1,
+          message: `SysML parser/compiler 不可用或执行失败：${error instanceof Error ? error.message : String(error)}`,
+          source: error instanceof Sysml2BackendUnavailableError ? 'sysml2-unavailable' : 'sysml2',
+          line: 1,
+          column: 1,
+        },
+      ],
+      backend: 'sysml2',
+    };
   }
-
-  const lspValidation = await validateSysmlWithLsp({ workspaceRoot, filePath, text, timeoutMs });
-  return {
-    ...lspValidation,
-    backend: lspValidation.backend ?? 'sysml-lsp',
-  };
 }
 
 export async function validateSysmlWithLspFallback({ workspaceRoot, filePath, text, timeoutMs = 30_000 }) {
-  const sysmlValidation = await validateSysml({ workspaceRoot, filePath, text, timeoutMs });
-  if (sysmlValidation.backend === 'sysml2' && !sysmlValidation.valid) {
-    const lspValidation = await validateSysmlWithLsp({ workspaceRoot, filePath, text, timeoutMs });
-    const fallbackBlockingDiagnostics = lspValidation.diagnostics.filter((diagnostic) => !isAcceptableLspFallbackDiagnostic(diagnostic));
-    if (fallbackBlockingDiagnostics.length === 0) {
-      return {
-        ...lspValidation,
-        valid: true,
-        backend: lspValidation.backend ?? 'sysml-lsp',
-        fallback: {
-          from: 'sysml2',
-          reason: 'sysml2-invalid-lsp-valid',
-          originalValidation: sysmlValidation,
-        },
-      };
-    }
-  }
-  return sysmlValidation;
+  return validateSysml({ workspaceRoot, filePath, text, timeoutMs });
 }

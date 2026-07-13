@@ -126,17 +126,27 @@ async function handle(request) {
     events.push(suggestion);
     writeFrame({ ok: true, event: suggestion });
     const draft = {
-      sysmlText: 'package Tianwen2ConfirmedModel {}',
+      sourceSet: {
+        rootDir: '',
+        entryPath: 'model.sysml',
+        files: [
+          { path: 'behavior.sysml', content: 'package Tianwen2ConfirmedModel {}' },
+          { path: 'constraints.sysml', content: 'package Tianwen2ConfirmedModel {}' },
+          { path: 'model.sysml', content: 'package Tianwen2ConfirmedModel {}' },
+          { path: 'requirements.sysml', content: 'package Tianwen2ConfirmedModel {}' },
+          { path: 'structure.sysml', content: 'package Tianwen2ConfirmedModel {}' },
+        ],
+      },
       viewModel: {
         schemaVersion: '0.4.0',
         projectId: 'tianwen-2',
-        source: 'sdk-agent-generated',
+        source: 'sysml-source-set-derived',
         generatedFrom: 'Tianwen2ConfirmedModel',
         views: [
           { id: 'requirements-view', title: '需求视图', kind: 'requirements', layout: 'auto', layoutEngine: 'deterministic-layered-layout', nodes: [], edges: [] },
           { id: 'bdd-structure-view', title: 'BDD 结构视图', kind: 'bdd', layout: 'auto', layoutEngine: 'deterministic-layered-layout', nodes: [], edges: [] },
         ],
-        validation: { status: 'passed', checkedRules: ['schema'] },
+        validation: { status: 'passed', checkedRules: ['schema', 'semantic-source-set', 'strict-sysml2'] },
       },
       validation: { valid: true, errors: [], findings: [] },
       provenance: {
